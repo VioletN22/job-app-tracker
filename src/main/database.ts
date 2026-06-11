@@ -456,12 +456,18 @@ export function updateApplication(
 }
 
 /**
- * Delete an application
+ * Delete an application and all related records
  */
 export function deleteApplication(id: string): void {
   const database = getDatabase();
-  const stmt = database.prepare('DELETE FROM applications WHERE id = ?');
-  stmt.run(id);
+
+  // Delete all related records first (cascade delete)
+  database.prepare('DELETE FROM stage_history WHERE application_id = ?').run(id);
+  database.prepare('DELETE FROM guidance_docs WHERE application_id = ?').run(id);
+  database.prepare('DELETE FROM attachments WHERE application_id = ?').run(id);
+
+  // Then delete the application itself
+  database.prepare('DELETE FROM applications WHERE id = ?').run(id);
 }
 
 // Stage History CRUD operations
