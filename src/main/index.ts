@@ -21,6 +21,9 @@ import {
   createApplication,
   createGuidanceDocs,
   getDefaultWorkflowForCompany,
+  createAttachment,
+  getAttachmentsForApplication,
+  deleteAttachment,
 } from './database';
 import { extractJobListing, generateGuidance } from './claude';
 import { JobApplication, Workflow, ExtractedJobData } from '../shared/types';
@@ -253,6 +256,80 @@ ipcMain.handle('file:selectFile', async (_event) => {
     };
   } catch (error) {
     throw new Error(`Failed to select file: ${error}`);
+  }
+});
+
+// Attachment Operations IPC Handlers
+
+/**
+ * Add an attachment to an application
+ */
+ipcMain.handle('attachment:add', async (_event, applicationId: string, filePath: string) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+
+    // Get file info
+    const fileName = path.basename(filePath);
+    const fileType = path.extname(filePath).substring(1) || 'unknown';
+
+    // Copy file to app data directory
+    const appPath = app.getPath('userData');
+    const attachmentsDir = path.join(appPath, 'attachments', applicationId);
+
+    // Ensure directory exists
+    if (!fs.existsSync(attachmentsDir)) {
+      fs.mkdirSync(attachmentsDir, { recursive: true });
+    }
+
+    const destPath = path.join(attachmentsDir, `${Date.now()}-${fileName}`);
+    fs.copyFileSync(filePath, destPath);
+
+    // Create attachment record in database
+    const attachment = createAttachment(applicationId, fileName, fileType, destPath);
+
+    return {
+      success: true,
+      attachment,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+});
+
+/**
+ * Get attachments for an application
+ */
+ipcMain.handle('attachment:getAll', async (_event, applicationId: string) => {
+  try {
+    const attachments = getAttachmentsForApplication(applicationId);
+    return {
+      success: true,
+      attachments,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+});
+
+/**
+ * Delete an attachment
+ */
+ipcMain.handle('attachment:delete', async (_event, attachmentId: string) => {
+  try {
+    deleteAttachment(attachmentId);
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 });
 

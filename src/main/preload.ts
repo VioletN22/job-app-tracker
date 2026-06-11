@@ -41,6 +41,16 @@ const electronAPI = {
   quickAddApplication: (company: string, jobTitle: string) =>
     ipcRenderer.invoke('quickAddApplication', company, jobTitle),
 
+  // Attachment operations
+  attachment: {
+    add: (applicationId: string, filePath: string) =>
+      ipcRenderer.invoke('attachment:add', applicationId, filePath),
+    getAll: (applicationId: string) =>
+      ipcRenderer.invoke('attachment:getAll', applicationId),
+    delete: (attachmentId: string) =>
+      ipcRenderer.invoke('attachment:delete', attachmentId),
+  },
+
   // Legacy shortcuts for backwards compatibility
   getAllApplications: (filters?: any) => ipcRenderer.invoke('db:getAllApplications', filters),
   selectFile: () => ipcRenderer.invoke('file:selectFile'),

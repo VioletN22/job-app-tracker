@@ -10,6 +10,7 @@ import {
   GuidanceType,
   GuidanceContent,
   ExtractedJobData,
+  Attachment,
 } from '../shared/types';
 
 let db: Database.Database | null = null;
@@ -93,6 +94,19 @@ export function initializeDatabase(): void {
     )
   `);
 
+  // Create attachments table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS attachments (
+      id TEXT PRIMARY KEY,
+      application_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      file_type TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (application_id) REFERENCES applications(id)
+    )
+  `);
+
   // Create indices for common queries
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_applications_company ON applications(company);
@@ -101,6 +115,7 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_stage_history_application_id ON stage_history(application_id);
     CREATE INDEX IF NOT EXISTS idx_guidance_docs_application_id ON guidance_docs(application_id);
     CREATE INDEX IF NOT EXISTS idx_guidance_docs_stage ON guidance_docs(stage);
+    CREATE INDEX IF NOT EXISTS idx_attachments_application_id ON attachments(application_id);
   `);
 }
 
@@ -663,4 +678,65 @@ function rowToGuidanceDoc(row: any): GuidanceDoc {
     content: row.content,
     generated_at: row.generated_at,
   };
+}
+
+// Attachment CRUD operations
+
+/**
+ * Create an attachment for an application
+ */
+export function createAttachment(
+  applicationId: string,
+  fileName: string,
+  fileType: string,
+  filePath: string
+): Attachment {
+  const database = getDatabase();
+  const id = randomUUID();
+  const createdAt = new Date().toISOString();
+
+  const stmt = database.prepare(`
+    INSERT INTO attachments (id, application_id, file_name, file_type, file_path, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  stmt.run(id, applicationId, fileName, fileType, filePath, createdAt);
+
+  return {
+    id,
+    application_id: applicationId,
+    file_name: fileName,
+    file_type: fileType,
+    file_path: filePath,
+    created_at: createdAt,
+  };
+}
+
+/**
+ * Get all attachments for an application
+ */
+export function getAttachmentsForApplication(applicationId: string): Attachment[] {
+  const database = getDatabase();
+  const stmt = database.prepare(
+    'SELECT * FROM attachments WHERE application_id = ? ORDER BY created_at DESC'
+  );
+  const rows = stmt.all(applicationId) as any[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    application_id: row.application_id,
+    file_name: row.file_name,
+    file_type: row.file_type,
+    file_path: row.file_path,
+    created_at: row.created_at,
+  }));
+}
+
+/**
+ * Delete an attachment
+ */
+export function deleteAttachment(id: string): void {
+  const database = getDatabase();
+  const stmt = database.prepare('DELETE FROM attachments WHERE id = ?');
+  stmt.run(id);
 }

@@ -12,15 +12,21 @@ if (!globalThis.fetch) {
 }
 
 // Create Anthropic client
-// Uses local Claude subscription via electron session
+// Uses API key from environment or user configuration
 let client: Anthropic | null = null;
 
 function getClient(): Anthropic {
   if (!client) {
-    // Initialize with local credentials or environment variable if set
-    client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        'Claude API authentication required.\n\n' +
+        'To use Extract with AI, set your API key:\n' +
+        '  export ANTHROPIC_API_KEY="your-api-key"\n\n' +
+        'Get your API key from: https://console.anthropic.com'
+      );
+    }
+    client = new Anthropic({ apiKey });
   }
   return client;
 }
