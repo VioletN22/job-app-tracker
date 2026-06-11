@@ -19,17 +19,32 @@ let client: Anthropic | null = null;
 
 function getStoredAuthToken(): string | null {
   try {
+    // Check environment variables first
+    const envToken = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
+    if (envToken) {
+      console.log('[Claude Auth] Found token in environment variable');
+      return envToken;
+    }
+
     // Check multiple possible Claude CLI token locations
     const homeDir = app.getPath('home');
     const possiblePaths = [
-      // macOS
+      // macOS - most common locations
+      path.join(homeDir, 'Library', 'Application Support', 'Claude', 'config.json'),
       path.join(homeDir, 'Library', 'Application Support', 'Claude', 'auth.json'),
+      path.join(homeDir, '.cache', 'claude', 'auth.json'),
+      path.join(homeDir, '.cache', 'claude', 'token'),
+      // Linux/Unix
+      path.join(homeDir, '.config', 'claude', 'config.json'),
       path.join(homeDir, '.config', 'claude', 'auth.json'),
-      // Linux/other
+      path.join(homeDir, '.claude', 'config.json'),
       path.join(homeDir, '.claude', 'auth.json'),
       path.join(homeDir, '.claude', 'auth-token'),
+      path.join(homeDir, '.local', 'share', 'claude', 'auth.json'),
       // Windows
+      path.join(homeDir, 'AppData', 'Local', 'Claude', 'config.json'),
       path.join(homeDir, 'AppData', 'Local', 'Claude', 'auth.json'),
+      path.join(homeDir, 'AppData', 'Roaming', 'Claude', 'config.json'),
     ];
 
     console.log('[Claude Auth] Checking token locations:');
@@ -48,10 +63,24 @@ function getStoredAuthToken(): string | null {
           if (content.startsWith('{')) {
             try {
               const data = JSON.parse(content);
-              const token = data.token || data.apiKey || data.authToken;
+              // Try multiple possible token field names
+              const token =
+                data.token ||
+                data.apiKey ||
+                data.api_key ||
+                data.authToken ||
+                data.auth_token ||
+                data.accessToken ||
+                data.access_token ||
+                (data.auth && data.auth.token) ||
+                (data.auth && data.auth.api_key);
+
               if (token) {
                 console.log('[Claude Auth] ✓ Found token in JSON at:', tokenPath);
+                console.log('[Claude Auth] Token field was:', Object.keys(data).join(', '));
                 return token;
+              } else {
+                console.log('[Claude Auth] JSON found but no recognized token field. Keys:', Object.keys(data).join(', '));
               }
             } catch (e) {
               console.log('[Claude Auth] JSON parse error:', e);
