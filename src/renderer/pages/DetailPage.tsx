@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, MapPin, DollarSign, Calendar, ChevronDown, ChevronRight } from 'lucide-react';
 import { JobApplication, Workflow, StageHistory } from '../../shared/types';
 import { ChatPanel } from '../components/ChatPanel';
+import { Dropdown } from '../components/Dropdown';
 
 interface DetailPageProps {
   applicationId: string | null;
@@ -14,20 +15,6 @@ const sectionLabel: React.CSSProperties = {
   textTransform: 'uppercase',
   color: 'var(--muted)',
   marginBottom: '8px',
-};
-
-const selectStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '10px 28px 10px 12px',
-  backgroundColor: 'var(--bg)',
-  border: '1px solid var(--line)',
-  fontSize: '13px',
-  color: 'var(--ink)',
-  cursor: 'pointer',
-  appearance: 'none',
-  WebkitAppearance: 'none',
-  borderRadius: 0,
-  outline: 'none',
 };
 
 export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack }) => {
@@ -58,7 +45,15 @@ export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack })
       setApplication(app);
 
       const workflows = await window.electronAPI.db.getAllWorkflows();
-      setWorkflow(workflows.find((w: Workflow) => w.id === app.workflow_id) || null);
+      const wf = workflows.find((w: Workflow) => w.id === app.workflow_id) || null;
+      setWorkflow(wf);
+
+      // Pre-select the natural next stage in the pipeline
+      if (wf) {
+        const idx = wf.stages.indexOf(app.current_stage);
+        const next = idx >= 0 && idx < wf.stages.length - 1 ? wf.stages[idx + 1] : '';
+        setSelectedStage(next);
+      }
 
       const history = await window.electronAPI.db.getStageHistory(applicationId);
       setStageHistory(history);
@@ -243,31 +238,57 @@ export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack })
 
           {/* Skills, compact two-column */}
           {(application.required_skills || application.key_responsibilities) && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-              {application.required_skills && (
-                <div>
-                  <p style={sectionLabel}>Required skills</p>
-                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {bullets(application.required_skills).slice(0, 6).map((s, i) => (
-                      <li key={i} style={{ fontSize: '13px', lineHeight: 1.4, color: 'var(--ink)', display: 'flex', gap: '8px' }}>
-                        <span style={{ color: 'var(--accent)' }}>—</span> {s}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {application.key_responsibilities && (
-                <div>
-                  <p style={sectionLabel}>Responsibilities</p>
-                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {bullets(application.key_responsibilities).slice(0, 6).map((s, i) => (
-                      <li key={i} style={{ fontSize: '13px', lineHeight: 1.4, color: 'var(--ink)', display: 'flex', gap: '8px' }}>
-                        <span style={{ color: 'var(--accent)' }}>—</span> {s}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: application.required_skills && application.key_responsibilities ? '1fr 1fr' : '1fr',
+                border: '1px solid var(--line)',
+              }}
+            >
+              {[
+                { label: 'Required skills', text: application.required_skills },
+                { label: 'Responsibilities', text: application.key_responsibilities },
+              ]
+                .filter((col) => col.text)
+                .map((col, colIdx) => (
+                  <div
+                    key={col.label}
+                    style={{
+                      padding: '20px',
+                      borderLeft: colIdx === 1 ? '1px solid var(--line)' : 'none',
+                    }}
+                  >
+                    <p style={sectionLabel}>{col.label}</p>
+                    <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                      {bullets(col.text).slice(0, 6).map((s, i) => (
+                        <li
+                          key={i}
+                          style={{
+                            position: 'relative',
+                            paddingLeft: '18px',
+                            marginBottom: '10px',
+                            fontSize: '13px',
+                            lineHeight: 1.55,
+                            color: 'var(--ink)',
+                          }}
+                        >
+                          <span
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              top: 0,
+                              color: 'var(--accent)',
+                              fontWeight: 600,
+                            }}
+                          >
+                            –
+                          </span>
+                          {s}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
             </div>
           )}
 
@@ -284,29 +305,12 @@ export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack })
           {/* Stage move */}
           <div>
             <p style={sectionLabel}>Move to stage</p>
-            <div style={{ position: 'relative', marginBottom: '10px' }}>
-              <select
+            <div style={{ marginBottom: '10px' }}>
+              <Dropdown
                 value={selectedStage}
-                onChange={(e) => setSelectedStage(e.target.value)}
-                style={selectStyle}
-              >
-                <option value="">Select stage…</option>
-                {nextStages.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown
-                size={14}
-                style={{
-                  position: 'absolute',
-                  right: '10px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  pointerEvents: 'none',
-                  color: 'var(--muted)',
-                }}
+                options={nextStages.map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))}
+                onChange={setSelectedStage}
+                placeholder="Select stage…"
               />
             </div>
             {selectedStage && (
