@@ -128,35 +128,166 @@ export const SettingsPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="p-8">
-        <h2 className="text-3xl font-bold text-gray-900 mb-4">Settings</h2>
-        <p className="text-gray-600">Loading workflows...</p>
+      <div style={{ padding: '32px' }}>
+        <h2 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '16px', color: 'var(--ink)' }}>
+          Settings
+        </h2>
+        <p style={{ color: 'var(--muted)', fontSize: '13px' }}>Loading...</p>
       </div>
     );
   }
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
-      <h2 className="text-3xl font-bold text-gray-900 mb-6">Settings</h2>
+    <div style={{ padding: '32px', maxWidth: '600px', margin: '0 auto' }}>
+      <h2 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '32px', color: 'var(--ink)' }}>
+        Settings
+      </h2>
 
       {/* Error message */}
       {error && (
-        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-red-700">{error}</p>
+        <div
+          style={{
+            marginBottom: '24px',
+            padding: '12px 16px',
+            backgroundColor: '#fee',
+            border: '1px solid var(--accent)',
+            borderRadius: '4px',
+            fontSize: '13px',
+            color: 'var(--accent)',
+          }}
+        >
+          {error}
         </div>
       )}
 
-      {/* Workflows section */}
-      <div className="bg-white p-6 rounded-lg border border-gray-200">
+      {/* Claude AI Status Section (Higher Priority) */}
+      <div
+        style={{
+          backgroundColor: 'var(--bg)',
+          border: '1px solid var(--line)',
+          borderRadius: '4px',
+          padding: '24px',
+          marginBottom: '32px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--ink)' }}>
+            Claude AI Status
+          </h3>
+          {claudeAuth && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {claudeAuth.authenticated ? (
+                <>
+                  <CheckCircle size={16} style={{ color: '#16a34a' }} />
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#16a34a' }}>Connected</span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle size={16} style={{ color: '#ca8a04' }} />
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#ca8a04' }}>Not Connected</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {claudeAuth && claudeAuth.authenticated ? (
+          <div
+            style={{
+              backgroundColor: '#dcfce7',
+              border: '1px solid #86efac',
+              borderRadius: '4px',
+              padding: '12px',
+              marginBottom: '12px',
+            }}
+          >
+            <p style={{ fontSize: '13px', color: '#166534', marginBottom: '8px' }}>
+              ✓ Claude is authenticated and ready for Extract with AI.
+            </p>
+          </div>
+        ) : (
+          <div
+            style={{
+              backgroundColor: '#fefce8',
+              border: '1px solid #fde047',
+              borderRadius: '4px',
+              padding: '12px',
+              marginBottom: '12px',
+            }}
+          >
+            <p style={{ fontSize: '13px', color: '#713f12', marginBottom: '12px' }}>
+              To use Extract with AI, run this command in your terminal:
+            </p>
+            <div
+              style={{
+                backgroundColor: 'var(--bg)',
+                padding: '8px 12px',
+                borderRadius: '4px',
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                color: 'var(--ink)',
+                marginBottom: '12px',
+              }}
+            >
+              claude login
+            </div>
+            <button
+              onClick={() => checkClaudeAuth()}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: 'var(--accent)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >
+              Check Status
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Workflows Section */}
+      <div
+        style={{
+          backgroundColor: 'var(--bg)',
+          border: '1px solid var(--line)',
+          borderRadius: '4px',
+          padding: '24px',
+        }}
+      >
         {/* Header with Add button */}
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold text-gray-900">Company Workflows</h3>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--ink)' }}>Company Workflows</h3>
           <button
             onClick={() => setShowAddWorkflow(!showAddWorkflow)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 12px',
+              backgroundColor: 'var(--accent)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
           >
-            <Plus className="w-5 h-5" />
-            Add Workflow
+            <Plus size={14} />
+            Add
           </button>
         </div>
 
@@ -164,73 +295,138 @@ export const SettingsPage: React.FC = () => {
         {showAddWorkflow && (
           <form
             onSubmit={handleAddWorkflow}
-            className="bg-gray-50 p-4 rounded-lg mb-6 space-y-4"
+            style={{
+              backgroundColor: 'var(--panel)',
+              border: '1px solid var(--line)',
+              borderRadius: '4px',
+              padding: '16px',
+              marginBottom: '20px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+            }}
           >
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
                 Company Name
               </label>
               <input
                 type="text"
                 value={form.company}
                 onChange={(e) => setForm({ ...form, company: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g., Google, Microsoft"
+                placeholder="e.g., Google"
+                style={{
+                  width: '100%',
+                  padding: '8px 0',
+                  borderBottom: '1px solid var(--ink)',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  borderBottom: '1px solid var(--line)',
+                  fontSize: '13px',
+                  color: 'var(--ink)',
+                  outline: 'none',
+                }}
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
                 Workflow Name
               </label>
               <input
                 type="text"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g., Standard Hiring Process"
+                placeholder="e.g., Standard Process"
+                style={{
+                  width: '100%',
+                  padding: '8px 0',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  borderBottom: '1px solid var(--line)',
+                  fontSize: '13px',
+                  color: 'var(--ink)',
+                  outline: 'none',
+                }}
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
                 Stages (comma-separated)
               </label>
               <textarea
                 value={form.stages}
                 onChange={(e) => setForm({ ...form, stages: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                rows={3}
-                placeholder="e.g., Applied, Phone Screen, Technical Interview, On-site, Offer"
+                placeholder="e.g., applied, phone_screen, interview, offer"
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  backgroundColor: 'var(--bg)',
+                  border: '1px solid var(--line)',
+                  borderRadius: '4px',
+                  fontSize: '13px',
+                  color: 'var(--ink)',
+                  fontFamily: 'inherit',
+                  minHeight: '60px',
+                  resize: 'vertical',
+                  outline: 'none',
+                }}
               />
             </div>
 
-            <div className="flex items-center gap-2">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <input
                 type="checkbox"
                 id="isDefault"
                 checked={form.isDefault}
                 onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
-                className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
               />
-              <label htmlFor="isDefault" className="text-sm text-gray-700">
-                Set as default for this company
+              <label htmlFor="isDefault" style={{ fontSize: '13px', color: 'var(--muted)', cursor: 'pointer' }}>
+                Set as default
               </label>
             </div>
 
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-              >
-                Create
-              </button>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button
                 type="button"
                 onClick={() => setShowAddWorkflow(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium text-gray-700"
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: 'transparent',
+                  border: '1px solid var(--line)',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  color: 'var(--muted)',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--panel)')}
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
                 Cancel
+              </button>
+              <button
+                type="submit"
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: 'var(--accent)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+              >
+                Create
               </button>
             </div>
           </form>
@@ -238,22 +434,43 @@ export const SettingsPage: React.FC = () => {
 
         {/* Workflows list */}
         {workflows.length === 0 ? (
-          <p className="text-gray-600">No workflows defined yet.</p>
+          <p style={{ fontSize: '13px', color: 'var(--muted)' }}>No workflows defined yet.</p>
         ) : (
-          <div className="space-y-3">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {workflows.map((workflow) => (
               <div
                 key={workflow.id}
-                className="bg-gray-50 p-4 rounded-lg flex items-start justify-between"
+                style={{
+                  backgroundColor: 'var(--panel)',
+                  padding: '12px',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                }}
               >
-                <div className="flex-1">
-                  <p className="font-semibold text-gray-900">{workflow.company}</p>
-                  <p className="text-sm text-gray-600 mb-2">{workflow.name}</p>
-                  <div className="flex gap-2 flex-wrap">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: '14px', fontWeight: 700, color: 'var(--ink)', marginBottom: '4px' }}>
+                    {workflow.company}
+                  </p>
+                  <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>
+                    {workflow.name}
+                  </p>
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                     {workflow.stages.map((stage) => (
                       <span
                         key={stage}
-                        className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium"
+                        style={{
+                          padding: '4px 8px',
+                          backgroundColor: 'var(--accent)',
+                          color: '#fff',
+                          borderRadius: '2px',
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                        }}
                       >
                         {stage}
                       </span>
@@ -262,91 +479,24 @@ export const SettingsPage: React.FC = () => {
                 </div>
                 <button
                   onClick={() => handleDeleteWorkflow(workflow.id)}
-                  className="p-2 text-red-600 hover:bg-red-50 rounded transition-colors"
+                  style={{
+                    padding: '4px 8px',
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--muted)',
+                    flexShrink: 0,
+                  }}
                   title="Delete workflow"
+                  onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted)')}
                 >
-                  <Trash2 className="w-5 h-5" />
+                  <Trash2 size={14} />
                 </button>
               </div>
             ))}
           </div>
         )}
-      </div>
-
-      {/* Claude Authentication section */}
-      <div className="bg-white p-6 rounded-lg border border-gray-200 mt-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">Claude AI Status</h3>
-          {claudeAuth && (
-            <div className="flex items-center gap-2">
-              {claudeAuth.authenticated ? (
-                <>
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                  <span className="text-sm font-medium text-green-600">Connected</span>
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="w-5 h-5 text-yellow-600" />
-                  <span className="text-sm font-medium text-yellow-600">Not Connected</span>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        {claudeAuth && claudeAuth.authenticated ? (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3 mb-4">
-            <p className="text-sm text-green-900">
-              ✓ Claude is authenticated and ready to use Extract with AI feature.
-            </p>
-            <p className="text-sm text-green-700">
-              Your subscription will be used for all AI-powered features. No API keys or per-token billing needed.
-            </p>
-          </div>
-        ) : (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-4">
-            <p className="text-sm text-yellow-900 font-medium">
-              To use Extract with AI, authenticate with Claude:
-            </p>
-
-            <div className="bg-white p-3 rounded border border-yellow-100 font-mono text-sm text-gray-800">
-              claude login
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-sm text-yellow-900">
-                <strong>Then restart this app after authenticating.</strong>
-              </p>
-              <button
-                onClick={() => checkClaudeAuth()}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm"
-              >
-                Check Authentication Status
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-4 space-y-3">
-          <p className="text-sm text-blue-900 font-medium">How to Authenticate:</p>
-          <ol className="text-sm text-blue-900 space-y-2 ml-4 list-decimal">
-            <li>Open your terminal</li>
-            <li>Run: <code className="bg-white px-2 py-1 rounded">claude login</code></li>
-            <li>Sign in with your Claude account in the browser</li>
-            <li>Return to this app and click "Check Authentication Status"</li>
-            <li>Extract with AI will be ready to use</li>
-          </ol>
-        </div>
-
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mt-4">
-          <p className="text-sm text-gray-900 font-medium mb-2">What Extract with AI Does:</p>
-          <ul className="text-sm text-gray-700 space-y-1 ml-4 list-disc">
-            <li>Paste any job listing (text, LinkedIn, screenshot, etc.)</li>
-            <li>Claude analyzes and extracts all job details</li>
-            <li>Automatically fills in: company, role, location, skills, salary, etc.</li>
-            <li>Creates a complete application entry ready to track</li>
-          </ul>
-        </div>
       </div>
     </div>
   );
