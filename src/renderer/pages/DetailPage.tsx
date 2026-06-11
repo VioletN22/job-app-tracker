@@ -1,293 +1,373 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft } from 'lucide-react';
-import { JobApplication, Workflow, StageHistory, GuidanceDoc } from '../../shared/types';
-import { StageTransition } from '../components/StageTransition';
-import { GuidancePanel } from '../components/GuidancePanel';
+import { ArrowLeft, MapPin, DollarSign, Calendar, ChevronDown, ChevronRight } from 'lucide-react';
+import { JobApplication, Workflow, StageHistory } from '../../shared/types';
+import { ChatPanel } from '../components/ChatPanel';
 
 interface DetailPageProps {
   applicationId: string | null;
   onBack: () => void;
 }
 
+const sectionLabel: React.CSSProperties = {
+  fontSize: '11px',
+  letterSpacing: '0.13em',
+  textTransform: 'uppercase',
+  color: 'var(--muted)',
+  marginBottom: '8px',
+};
+
+const selectStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '10px 28px 10px 12px',
+  backgroundColor: 'var(--bg)',
+  border: '1px solid var(--line)',
+  fontSize: '13px',
+  color: 'var(--ink)',
+  cursor: 'pointer',
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  borderRadius: 0,
+  outline: 'none',
+};
 
 export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack }) => {
   const [application, setApplication] = useState<JobApplication | null>(null);
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [stageHistory, setStageHistory] = useState<StageHistory[]>([]);
-  const [guidanceDocs, setGuidanceDocs] = useState<GuidanceDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedStage, setSelectedStage] = useState('');
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [showDescription, setShowDescription] = useState(false);
 
   useEffect(() => {
-    if (applicationId) {
-      loadData();
-    }
+    if (applicationId) loadData();
   }, [applicationId]);
 
   const loadData = async () => {
     if (!applicationId) return;
-
     setLoading(true);
     setError(null);
-
     try {
-      // Fetch application
       const app = await window.electronAPI.db.getApplication(applicationId);
       if (!app) {
         setError('Application not found');
-        setApplication(null);
         setLoading(false);
         return;
       }
-
       setApplication(app);
 
-      // Fetch all workflows and find matching one
       const workflows = await window.electronAPI.db.getAllWorkflows();
-      const matchingWorkflow = workflows.find(
-        (w: Workflow) => w.id === app.workflow_id
-      );
-      setWorkflow(matchingWorkflow || null);
+      setWorkflow(workflows.find((w: Workflow) => w.id === app.workflow_id) || null);
 
-      // Fetch stage history
       const history = await window.electronAPI.db.getStageHistory(applicationId);
       setStageHistory(history);
-
-      // Fetch guidance docs for current stage
-      const docs = await window.electronAPI.db.getGuidanceDocs(
-        applicationId,
-        app.current_stage
-      );
-      setGuidanceDocs(docs);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load application';
-      setError(message);
+      setError(err instanceof Error ? err.message : 'Failed to load application');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleStageTransition = async (stage: string, notes?: string) => {
-    if (!applicationId || !application) return;
-
+  const handleStageMove = async () => {
+    if (!applicationId || !selectedStage) return;
     setIsTransitioning(true);
-
     try {
-      // Create stage history entry
-      await window.electronAPI.db.createStageHistory(applicationId, stage, notes);
-
-      // Update application with new stage
-      await window.electronAPI.db.updateApplication(applicationId, {
-        current_stage: stage,
-      });
-
-      // Refresh data
+      await window.electronAPI.db.createStageHistory(applicationId, selectedStage);
+      await window.electronAPI.db.updateApplication(applicationId, { current_stage: selectedStage });
+      setSelectedStage('');
       await loadData();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to transition stage';
-      setError(message);
+      setError(err instanceof Error ? err.message : 'Failed to move stage');
     } finally {
       setIsTransitioning(false);
     }
   };
 
   const handleNotesBlur = async (newNotes: string) => {
-    if (!applicationId || !application || newNotes === application.notes) {
-      return;
-    }
-
+    if (!applicationId || !application || newNotes === application.notes) return;
     try {
-      await window.electronAPI.db.updateApplication(applicationId, {
-        notes: newNotes,
-      });
+      await window.electronAPI.db.updateApplication(applicationId, { notes: newNotes });
       setApplication({ ...application, notes: newNotes });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save notes';
-      setError(message);
-    }
-  };
-
-  const formatDate = (dateString: string | null): string => {
-    if (!dateString) return '';
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
     } catch {
-      return dateString;
+      /* non-fatal */
     }
   };
 
-  const formatSalary = (min: number | null, max: number | null): string => {
-    if (!min && !max) return 'Not specified';
-    const minK = min ? `$${Math.round(min / 1000)}k` : '';
-    const maxK = max ? `$${Math.round(max / 1000)}k` : '';
-    if (minK && maxK) return `${minK} - ${maxK}`;
-    return minK || maxK;
+  const formatDate = (d: string | null): string => {
+    if (!d) return '';
+    try {
+      return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
+      return d;
+    }
+  };
+
+  const formatSalary = (min: number | null, max: number | null): string | null => {
+    if (!min && !max) return null;
+    const f = (n: number) => `$${Math.round(n / 1000)}k`;
+    if (min && max) return `${f(min)} – ${f(max)}`;
+    return f((min || max)!);
   };
 
   if (loading) {
     return (
-      <div className="p-8 max-w-4xl mx-auto">
-        <p className="text-gray-600">Loading application...</p>
+      <div style={{ padding: '32px' }}>
+        <p style={{ fontSize: '13px', color: 'var(--muted)' }}>Loading…</p>
       </div>
     );
   }
 
-  if (error) {
+  if (error || !application) {
     return (
-      <div className="p-8 max-w-4xl mx-auto">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium mb-4"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Applications
+      <div style={{ padding: '32px' }}>
+        <button onClick={onBack} className="navlink" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px' }}>
+          <ArrowLeft size={14} /> Back to Applications
         </button>
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-red-700">{error}</p>
-        </div>
+        <p style={{ fontSize: '13px', color: 'var(--accent)' }}>{error || 'Application not found'}</p>
       </div>
     );
   }
 
-  if (!application) {
-    return (
-      <div className="p-8 max-w-4xl mx-auto">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium mb-4"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Applications
-        </button>
-        <p className="text-gray-600">Application not found</p>
-      </div>
-    );
-  }
+  const nextStages = workflow
+    ? workflow.stages.filter((s) => s !== application.current_stage)
+    : [];
+  const salary = formatSalary(application.salary_min, application.salary_max);
+  const bullets = (text: string) =>
+    text
+      .split('\n')
+      .map((l) => l.replace(/^[-•*]\s*/, '').trim())
+      .filter(Boolean);
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
-      {/* Back button */}
+    <div style={{ padding: '32px', maxWidth: '960px', margin: '0 auto' }}>
+      {/* Back */}
       <button
         onClick={onBack}
-        className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium mb-6"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: '11px',
+          letterSpacing: '0.13em',
+          textTransform: 'uppercase',
+          color: 'var(--muted)',
+          backgroundColor: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          marginBottom: '28px',
+          padding: 0,
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--ink)')}
+        onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted)')}
       >
-        <ArrowLeft className="w-4 h-4" />
-        Back to Applications
+        <ArrowLeft size={14} /> Back
       </button>
 
-      {/* Main content grid */}
-      <div className="lg:grid lg:grid-cols-3 gap-6">
-        {/* Main content area (2 columns) */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Header section */}
-          <div className="bg-white p-6 rounded-lg border border-gray-200">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              {application.job_title}
-            </h1>
-            <p className="text-lg text-gray-600 mb-6">{application.company}</p>
+      {/* Header */}
+      <div style={{ borderBottom: '1px solid var(--ink)', paddingBottom: '20px', marginBottom: '24px' }}>
+        <span
+          style={{
+            display: 'inline-block',
+            padding: '4px 8px',
+            backgroundColor: 'var(--accent)',
+            color: '#fff',
+            fontSize: '10px',
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            marginBottom: '12px',
+          }}
+        >
+          {application.current_stage}
+        </span>
+        <h1 style={{ fontSize: '28px', fontWeight: 700, color: 'var(--ink)', marginBottom: '4px' }}>
+          {application.job_title}
+        </h1>
+        <p style={{ fontSize: '15px', color: 'var(--muted)', marginBottom: '12px' }}>{application.company}</p>
 
-            {/* Details grid */}
-            <div className="grid grid-cols-2 gap-4">
-              {application.location && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase mb-1">
-                    Location
-                  </p>
-                  <p className="text-gray-900">{application.location}</p>
-                </div>
-              )}
-
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase mb-1">
-                  Salary Range
-                </p>
-                <p className="text-gray-900">
-                  {formatSalary(application.salary_min, application.salary_max)}
-                </p>
-              </div>
-
-              {application.equity && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase mb-1">
-                    Equity
-                  </p>
-                  <p className="text-gray-900">{application.equity}</p>
-                </div>
-              )}
-
-              {application.application_deadline && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase mb-1">
-                    Application Deadline
-                  </p>
-                  <p className="text-gray-900">
-                    {formatDate(application.application_deadline)}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Job description section */}
-          <div className="bg-white p-6 rounded-lg border border-gray-200">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              Job Description
-            </h2>
-            <p className="text-gray-700 whitespace-pre-wrap">
-              {application.job_description}
-            </p>
-          </div>
-
-          {/* Guidance section */}
-          <div className="bg-white p-6 rounded-lg border border-gray-200">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              Guidance for {application.current_stage}
-            </h2>
-            <GuidancePanel guidanceDocs={guidanceDocs} />
-          </div>
+        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', fontSize: '13px', color: 'var(--muted)' }}>
+          {application.location && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <MapPin size={13} /> {application.location}
+            </span>
+          )}
+          {salary && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <DollarSign size={13} /> {salary}
+            </span>
+          )}
+          {application.application_deadline && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Calendar size={13} /> Due {formatDate(application.application_deadline)}
+            </span>
+          )}
         </div>
+      </div>
 
-        {/* Sidebar (1 column) */}
-        <div className="space-y-6">
-          {/* Stage transition */}
-          <StageTransition
-            currentStage={application.current_stage}
-            availableStages={workflow?.stages || []}
-            onTransition={handleStageTransition}
-            isLoading={isTransitioning}
-          />
-
-          {/* Stage history */}
-          <div className="bg-white p-6 rounded-lg border border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Stage History
-            </h3>
-            {stageHistory.length > 0 ? (
-              <div className="space-y-3">
-                {stageHistory.map((entry) => (
-                  <div key={entry.id} className="border-b border-gray-200 pb-3 last:border-b-0">
-                    <p className="font-medium text-gray-900">{entry.stage}</p>
-                    <p className="text-xs text-gray-500">
-                      {formatDate(entry.entered_at)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-gray-600">No stage history yet.</p>
+      {/* Two-column layout */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '32px', alignItems: 'start' }}>
+        {/* Left: content */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '28px', minWidth: 0 }}>
+          {/* About (clean summary) */}
+          <div>
+            <p style={sectionLabel}>About the role</p>
+            <p style={{ fontSize: '13px', lineHeight: 1.6, color: 'var(--ink)' }}>
+              {application.job_description.length > 600 && !showDescription
+                ? application.job_description.slice(0, 600) + '…'
+                : application.job_description}
+            </p>
+            {application.job_description.length > 600 && (
+              <button
+                onClick={() => setShowDescription(!showDescription)}
+                style={{
+                  marginTop: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  fontSize: '11px',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--muted)',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              >
+                {showDescription ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                {showDescription ? 'Show less' : 'Show full description'}
+              </button>
             )}
           </div>
 
-          {/* Notes section */}
-          <div className="bg-white p-6 rounded-lg border border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Notes</h3>
+          {/* Skills, compact two-column */}
+          {(application.required_skills || application.key_responsibilities) && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+              {application.required_skills && (
+                <div>
+                  <p style={sectionLabel}>Required skills</p>
+                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {bullets(application.required_skills).slice(0, 6).map((s, i) => (
+                      <li key={i} style={{ fontSize: '13px', lineHeight: 1.4, color: 'var(--ink)', display: 'flex', gap: '8px' }}>
+                        <span style={{ color: 'var(--accent)' }}>—</span> {s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {application.key_responsibilities && (
+                <div>
+                  <p style={sectionLabel}>Responsibilities</p>
+                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {bullets(application.key_responsibilities).slice(0, 6).map((s, i) => (
+                      <li key={i} style={{ fontSize: '13px', lineHeight: 1.4, color: 'var(--ink)', display: 'flex', gap: '8px' }}>
+                        <span style={{ color: 'var(--accent)' }}>—</span> {s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Assistant chat */}
+          <ChatPanel
+            applicationId={application.id}
+            company={application.company}
+            jobTitle={application.job_title}
+          />
+        </div>
+
+        {/* Right: sidebar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+          {/* Stage move */}
+          <div>
+            <p style={sectionLabel}>Move to stage</p>
+            <div style={{ position: 'relative', marginBottom: '10px' }}>
+              <select
+                value={selectedStage}
+                onChange={(e) => setSelectedStage(e.target.value)}
+                style={selectStyle}
+              >
+                <option value="">Select stage…</option>
+                {nextStages.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                size={14}
+                style={{
+                  position: 'absolute',
+                  right: '10px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  pointerEvents: 'none',
+                  color: 'var(--muted)',
+                }}
+              />
+            </div>
+            {selectedStage && (
+              <button
+                onClick={handleStageMove}
+                disabled={isTransitioning}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  backgroundColor: 'var(--accent)',
+                  color: '#fff',
+                  border: 'none',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  cursor: 'pointer',
+                  opacity: isTransitioning ? 0.6 : 1,
+                }}
+              >
+                {isTransitioning ? 'Moving…' : `Move to ${selectedStage}`}
+              </button>
+            )}
+          </div>
+
+          {/* History */}
+          <div>
+            <p style={sectionLabel}>History</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {stageHistory.length === 0 && (
+                <p style={{ fontSize: '13px', color: 'var(--muted)' }}>No history yet.</p>
+              )}
+              {stageHistory.map((entry) => (
+                <div key={entry.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span style={{ color: 'var(--ink)', fontWeight: 600 }}>{entry.stage}</span>
+                  <span style={{ color: 'var(--muted)' }}>{formatDate(entry.entered_at)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <p style={sectionLabel}>Notes</p>
             <textarea
               defaultValue={application.notes || ''}
               onBlur={(e) => handleNotesBlur(e.currentTarget.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              placeholder="Your notes…"
               rows={5}
+              style={{
+                width: '100%',
+                padding: '10px',
+                backgroundColor: 'var(--panel)',
+                border: '1px solid var(--line)',
+                fontSize: '13px',
+                color: 'var(--ink)',
+                fontFamily: 'inherit',
+                lineHeight: 1.5,
+                resize: 'vertical',
+                outline: 'none',
+              }}
             />
           </div>
         </div>

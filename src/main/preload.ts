@@ -38,6 +38,13 @@ const electronAPI = {
     checkAuth: () => ipcRenderer.invoke('claude:checkAuth'),
   },
 
+  // Per-application chat assistant
+  chat: {
+    getMessages: (applicationId: string) => ipcRenderer.invoke('chat:getMessages', applicationId),
+    send: (applicationId: string, message: string) =>
+      ipcRenderer.invoke('chat:send', applicationId, message),
+  },
+
   // Quick add operation
   quickAddApplication: (company: string, jobTitle: string) =>
     ipcRenderer.invoke('quickAddApplication', company, jobTitle),

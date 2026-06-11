@@ -24,8 +24,10 @@ import {
   createAttachment,
   getAttachmentsForApplication,
   deleteAttachment,
+  addChatMessage,
+  getChatMessages,
 } from './database';
-import { extractJobListing, generateGuidance, runClaudeCLI } from './claude';
+import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
 import { JobApplication, Workflow, ExtractedJobData } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -382,7 +384,7 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
       workflow = createWorkflow(
         extractedData.company,
         `${extractedData.company} Default Workflow`,
-        ['applied', 'phone_screen', 'interview', 'offer'],
+        ['started', 'applied', 'phone_screen', 'interview', 'offer'],
         true
       );
     }
@@ -390,41 +392,16 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
     // Step 3: Create application with extracted data
     const application = createApplication(extractedData, workflow.id);
 
-    // Step 4: Try to generate guidance (optional - doesn't block if Claude unavailable)
-    let hasGuidance = false;
-    try {
-      const guidanceContent = await generateGuidance(
-        extractedData.company,
-        extractedData.job_title,
-        extractedData.location,
-        extractedData.job_description,
-        extractedData.key_responsibilities,
-        extractedData.required_skills
-      );
-
-      // Step 5: Create guidance docs for each stage in workflow
-      for (const stage of workflow.stages) {
-        createGuidanceDocs(application.id, stage, guidanceContent);
-      }
-      hasGuidance = true;
-    } catch (guidanceError) {
-      // Guidance generation is optional - continue without it
-      console.log('Guidance generation skipped:', guidanceError);
-    }
-
-    // Step 6: Create initial stage history entry (start with 'started' status)
-    createStageHistory(
-      application.id,
-      'started',
-      hasGuidance ? 'Application ingested with AI extraction' : 'Application added - edit details as needed'
-    );
+    // Step 4: Initial stage history entry (start with 'started' status).
+    // No upfront guidance generation - the per-application chat assistant
+    // covers that on demand, which keeps ingest fast.
+    createStageHistory(application.id, 'started', 'Application added');
 
     console.log('[Extract with AI] Success! Created application:', application.id);
     return {
       success: true,
       application,
       workflow,
-      hasGuidance,
     };
   } catch (error) {
     console.error('[Extract with AI] Fatal error:', error);
@@ -465,6 +442,65 @@ ipcMain.handle('claude:checkAuth', async () => {
 });
 
 /**
+ * Get chat history for an application
+ */
+ipcMain.handle('chat:getMessages', async (_event, applicationId: string) => {
+  try {
+    return getChatMessages(applicationId);
+  } catch (error) {
+    throw new Error(`Failed to get chat messages: ${error}`);
+  }
+});
+
+/**
+ * Send a chat message about an application.
+ * Injects the application context so Claude already knows the job.
+ */
+ipcMain.handle('chat:send', async (_event, applicationId: string, message: string) => {
+  try {
+    const application = getApplication(applicationId);
+    if (!application) {
+      return { success: false, error: 'Application not found' };
+    }
+
+    const history = getChatMessages(applicationId).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    const appContext = [
+      `Company: ${application.company}`,
+      `Role: ${application.job_title}`,
+      application.location ? `Location: ${application.location}` : '',
+      `Current stage: ${application.current_stage}`,
+      application.salary_min || application.salary_max
+        ? `Salary: ${application.salary_min ?? '?'} - ${application.salary_max ?? '?'}`
+        : '',
+      `Description: ${application.job_description.slice(0, 1500)}`,
+      application.key_responsibilities ? `Responsibilities: ${application.key_responsibilities}` : '',
+      application.required_skills ? `Required skills: ${application.required_skills}` : '',
+      application.notes ? `User's own notes: ${application.notes}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const reply = await chatAboutApplication(appContext, history, message);
+
+    // Persist both turns
+    const userMsg = addChatMessage(applicationId, 'user', message);
+    const assistantMsg = addChatMessage(applicationId, 'assistant', reply);
+
+    return { success: true, userMessage: userMsg, assistantMessage: assistantMsg };
+  } catch (error) {
+    console.error('[Chat] Error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+});
+
+/**
  * Quick add an application with just company and job title
  */
 ipcMain.handle('quickAddApplication', async (_event, company: string, jobTitle: string) => {
@@ -472,7 +508,7 @@ ipcMain.handle('quickAddApplication', async (_event, company: string, jobTitle: 
     // Get or create default workflow for company
     let workflow = getDefaultWorkflowForCompany(company);
     if (!workflow) {
-      workflow = createWorkflow(company, `${company} Default Workflow`, ['applied', 'phone_screen', 'interview', 'offer'], true);
+      workflow = createWorkflow(company, `${company} Default Workflow`, ['started', 'applied', 'phone_screen', 'interview', 'offer'], true);
     }
 
     // Create minimal application entry

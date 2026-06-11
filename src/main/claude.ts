@@ -180,35 +180,61 @@ export function getClient(): Anthropic {
 }
 
 /**
+ * Robustly parse JSON from a Claude response.
+ * Handles markdown code fences and surrounding prose.
+ */
+function parseJSONResponse<T>(text: string): T {
+  // Strip markdown code fences if present
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+
+  // Slice from first { to last } to drop any surrounding prose
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(`No JSON object found in response: ${text.slice(0, 200)}`);
+  }
+  cleaned = cleaned.slice(start, end + 1);
+
+  return JSON.parse(cleaned) as T;
+}
+
+/**
  * Extracts structured job data from raw job listing text
  * Uses Claude CLI (subscription auth) first, falls back to SDK if needed
  */
 export async function extractJobListing(
   jobListingText: string
 ): Promise<ExtractedJobData> {
-  const extractionPrompt = `You are a job listing data extraction specialist. Extract structured data from the following job listing text.
+  const extractionPrompt = `Extract structured data from this job listing (it may be a messy copy-paste from LinkedIn or another job board, full of UI text like "Apply", "Save", "Promoted", "Premium" - ignore all that noise).
 
-Return ONLY a valid JSON object with these fields (use null for missing values):
-- company (string): Company name
-- job_title (string): Job title
-- location (string): Job location
-- job_url (string): URL to the job listing (use empty string if not found)
-- salary_min (number or null): Minimum salary in USD
-- salary_max (number or null): Maximum salary in USD
-- equity (string or null): Equity information if mentioned
-- benefits (string or null): Benefits summary
-- job_description (string): Full job description
-- key_responsibilities (string): Key responsibilities (comma-separated or bullet points)
-- required_skills (string): Required skills and qualifications
-- nice_to_have_skills (string): Nice-to-have skills
-- team_info (string or null): Information about the team
-- hiring_timeline (string or null): Timeline for hiring process
-- application_deadline (string or null): Application deadline if mentioned
+CRITICAL RULES:
+- company and job_title are almost always present - look carefully. E.g. "Software Engineer at Frollo" means job_title="Software Engineer", company="Frollo". Never return "Unknown" if the info exists anywhere in the text.
+- job_description must be a CLEAN, CONCISE rewrite (max 150 words): what the company does + what the role is. Strip ALL job-board boilerplate, promo text, premium upsells, follower counts, etc.
+- key_responsibilities, required_skills, nice_to_have_skills: short bullet-style lines separated by newlines, max 6 each.
+- Salaries: convert to numbers (e.g. "$120k" -> 120000). Use null if not stated.
+
+Return ONLY a valid JSON object (no markdown fences, no commentary) with exactly these fields:
+{
+  "company": string,
+  "job_title": string,
+  "location": string,
+  "job_url": string (empty string if not found),
+  "salary_min": number | null,
+  "salary_max": number | null,
+  "equity": string | null,
+  "benefits": string | null (one short line),
+  "job_description": string (clean, max 150 words),
+  "key_responsibilities": string (newline-separated bullets),
+  "required_skills": string (newline-separated bullets),
+  "nice_to_have_skills": string (newline-separated bullets, empty string if none),
+  "team_info": string | null,
+  "hiring_timeline": string | null,
+  "application_deadline": string | null
+}
 
 Job listing text:
-${jobListingText}
-
-Return ONLY the JSON object, no other text.`;
+${jobListingText}`;
 
   let responseText: string;
 
@@ -241,35 +267,38 @@ Return ONLY the JSON object, no other text.`;
     responseText = textContent.text;
   }
 
-  // Parse JSON response
+  // Parse JSON response (handles code fences and surrounding prose)
   let extractedData: ExtractedJobData;
   try {
-    extractedData = JSON.parse(responseText);
+    extractedData = parseJSONResponse<ExtractedJobData>(responseText);
   } catch (error) {
     throw new Error(
-      `Failed to parse Claude extraction response as JSON: ${responseText}. Error: ${error}`
+      `Failed to parse Claude extraction response as JSON: ${responseText.slice(0, 300)}. Error: ${error}`
     );
   }
 
-  // Validate required fields
+  // Fill safe defaults for optional-ish fields so validation doesn't reject good extractions
+  extractedData.job_url = extractedData.job_url || '';
+  extractedData.nice_to_have_skills = extractedData.nice_to_have_skills || '';
+
+  // Validate truly required fields only (others get safe defaults)
   const requiredFields: (keyof ExtractedJobData)[] = [
     "company",
     "job_title",
-    "location",
-    "job_url",
     "job_description",
-    "key_responsibilities",
-    "required_skills",
-    "nice_to_have_skills",
   ];
 
   for (const field of requiredFields) {
     if (!extractedData[field]) {
       throw new Error(
-        `Missing required field in extraction: ${field}. Response: ${responseText}`
+        `Missing required field in extraction: ${field}. Response: ${responseText.slice(0, 300)}`
       );
     }
   }
+
+  extractedData.location = extractedData.location || '';
+  extractedData.key_responsibilities = extractedData.key_responsibilities || '';
+  extractedData.required_skills = extractedData.required_skills || '';
 
   // Ensure salary fields are numbers or null
   if (extractedData.salary_min !== null && extractedData.salary_min !== undefined) {
@@ -363,13 +392,13 @@ No other text, only valid JSON.`;
     responseText = textContent.text;
   }
 
-  // Parse JSON response
+  // Parse JSON response (handles code fences and surrounding prose)
   let guidanceData: GuidanceContent;
   try {
-    guidanceData = JSON.parse(responseText);
+    guidanceData = parseJSONResponse<GuidanceContent>(responseText);
   } catch (error) {
     throw new Error(
-      `Failed to parse Claude guidance response as JSON: ${responseText}. Error: ${error}`
+      `Failed to parse Claude guidance response as JSON: ${responseText.slice(0, 300)}. Error: ${error}`
     );
   }
 
@@ -384,10 +413,46 @@ No other text, only valid JSON.`;
   for (const section of requiredSections) {
     if (!guidanceData[section] || typeof guidanceData[section] !== "string") {
       throw new Error(
-        `Missing or invalid guidance section: ${section}. Response: ${responseText}`
+        `Missing or invalid guidance section: ${section}. Response: ${responseText.slice(0, 300)}`
       );
     }
   }
 
   return guidanceData;
+}
+
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * Chat about a specific application. The application context is injected
+ * so the assistant already knows the job - no copy-pasting needed.
+ */
+export async function chatAboutApplication(
+  appContext: string,
+  history: ChatTurn[],
+  userMessage: string
+): Promise<string> {
+  const historyText = history
+    .slice(-10) // keep prompt small: last 10 turns
+    .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
+    .join('\n\n');
+
+  const prompt = `You are a sharp, concise job application coach inside a job tracker app. You already have full context on the application below - never ask the user to paste the job listing.
+
+APPLICATION CONTEXT:
+${appContext}
+
+${historyText ? `CONVERSATION SO FAR:\n${historyText}\n\n` : ''}User: ${userMessage}
+
+Rules for your reply:
+- Be brief and direct. Short paragraphs or tight bullet lists. No essays.
+- Plain text only (no markdown headers). Max ~150 words unless the user explicitly asks for something long (like a cover letter).
+- Be specific to THIS company and role, not generic advice.
+
+Reply now as the assistant:`;
+
+  return runClaudeCLI(prompt, 90000);
 }

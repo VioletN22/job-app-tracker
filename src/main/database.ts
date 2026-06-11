@@ -107,6 +107,18 @@ export function initializeDatabase(): void {
     )
   `);
 
+  // Create chat_messages table (per-application AI assistant)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      application_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (application_id) REFERENCES applications(id)
+    )
+  `);
+
   // Create indices for common queries
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_applications_company ON applications(company);
@@ -314,7 +326,7 @@ export function createApplication(
     extractedData.team_info ?? null,
     extractedData.hiring_timeline ?? null,
     extractedData.application_deadline ?? null,
-    'applied',
+    'started',
     workflowId,
     notes,
     now,
@@ -338,7 +350,7 @@ export function createApplication(
     team_info: extractedData.team_info,
     hiring_timeline: extractedData.hiring_timeline,
     application_deadline: extractedData.application_deadline,
-    current_stage: 'applied',
+    current_stage: 'started',
     workflow_id: workflowId,
     notes,
     created_at: now,
@@ -465,9 +477,41 @@ export function deleteApplication(id: string): void {
   database.prepare('DELETE FROM stage_history WHERE application_id = ?').run(id);
   database.prepare('DELETE FROM guidance_docs WHERE application_id = ?').run(id);
   database.prepare('DELETE FROM attachments WHERE application_id = ?').run(id);
+  database.prepare('DELETE FROM chat_messages WHERE application_id = ?').run(id);
 
   // Then delete the application itself
   database.prepare('DELETE FROM applications WHERE id = ?').run(id);
+}
+
+// Chat message CRUD operations
+
+export interface ChatMessageRow {
+  id: string;
+  application_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
+
+export function addChatMessage(
+  applicationId: string,
+  role: 'user' | 'assistant',
+  content: string
+): ChatMessageRow {
+  const database = getDatabase();
+  const id = randomUUID();
+  const createdAt = new Date().toISOString();
+  database
+    .prepare('INSERT INTO chat_messages (id, application_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, applicationId, role, content, createdAt);
+  return { id, application_id: applicationId, role, content, created_at: createdAt };
+}
+
+export function getChatMessages(applicationId: string): ChatMessageRow[] {
+  const database = getDatabase();
+  return database
+    .prepare('SELECT * FROM chat_messages WHERE application_id = ? ORDER BY created_at ASC')
+    .all(applicationId) as ChatMessageRow[];
 }
 
 // Stage History CRUD operations
