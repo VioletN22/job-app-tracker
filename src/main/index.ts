@@ -339,15 +339,19 @@ ipcMain.handle('attachment:delete', async (_event, attachmentId: string) => {
  * Orchestrate the entire job listing ingestion workflow
  */
 ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string, company: string) => {
+  console.log('[Extract with AI] Starting job listing ingestion');
   try {
     // Step 1: Extract job listing data
     let extractedData: ExtractedJobData;
     try {
+      console.log('[Extract with AI] Calling extractJobListing...');
       extractedData = await extractJobListing(jobListingText);
+      console.log('[Extract with AI] Successfully extracted:', extractedData.company, extractedData.job_title);
     } catch (claudeError) {
       // If Claude extraction fails, create basic data from the input
       // This allows Quick Add via paste to still work
       const errorMsg = claudeError instanceof Error ? claudeError.message : String(claudeError);
+      console.error('[Extract with AI] Extraction error:', errorMsg, claudeError);
 
       // Try to extract company from input if not provided
       const finalCompany = company && company !== 'Unknown Company' ? company : 'Unknown Company';
@@ -415,6 +419,7 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
       hasGuidance ? 'Application ingested with AI extraction' : 'Application added - edit details as needed'
     );
 
+    console.log('[Extract with AI] Success! Created application:', application.id);
     return {
       success: true,
       application,
@@ -422,9 +427,11 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
       hasGuidance,
     };
   } catch (error) {
+    console.error('[Extract with AI] Fatal error:', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMsg,
     };
   }
 });
