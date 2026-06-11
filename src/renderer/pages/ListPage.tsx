@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FilterBar } from '../components/FilterBar';
 import { ApplicationCard } from '../components/ApplicationCard';
 import { AddApplicationModal } from '../modals/AddApplicationModal';
+import { Dialog } from '../components/Dialog';
 import { useApplications } from '../hooks/useApplications';
 
 interface Filters {
@@ -18,6 +19,7 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [filters, setFilters] = useState<Filters>({});
+  const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
 
   const handleFilterChange = async (newFilters: Filters) => {
     setFilters(newFilters);
@@ -74,7 +76,10 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
       await refresh(filters);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete application';
-      alert(`Error: ${errorMessage}`);
+      setErrorDialog({
+        title: 'Error Deleting Application',
+        message: errorMessage,
+      });
     }
   };
 
@@ -133,6 +138,19 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
           onSubmit={handleAddApplication}
           onQuickAdd={handleQuickAdd}
           isLoading={isProcessing}
+        />
+      )}
+
+      {/* Error Dialog */}
+      {errorDialog && (
+        <Dialog
+          isOpen={true}
+          title={errorDialog.title}
+          message={errorDialog.message}
+          onConfirm={() => setErrorDialog(null)}
+          onCancel={() => setErrorDialog(null)}
+          confirmText="OK"
+          isDangerous={false}
         />
       )}
     </div>

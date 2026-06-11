@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { MapPin, DollarSign, Calendar, Trash2 } from 'lucide-react';
 import { JobApplication } from '../../shared/types';
+import { Dialog } from './Dialog';
 
 interface ApplicationCardProps {
   application: JobApplication;
@@ -9,6 +10,8 @@ interface ApplicationCardProps {
 }
 
 export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, onClick, onDelete }) => {
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+
   const formatDate = (dateString: string | null): string => {
     if (!dateString) return '';
     try {
@@ -29,9 +32,12 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, o
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm(`Delete application for ${application.job_title} at ${application.company}?`)) {
-      onDelete?.(application.id);
-    }
+    setShowDeleteDialog(true);
+  };
+
+  const handleConfirmDelete = () => {
+    setShowDeleteDialog(false);
+    onDelete?.(application.id);
   };
 
   return (
@@ -141,6 +147,18 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, o
           <span>{formatDate(application.application_deadline)}</span>
         </div>
       )}
+
+      {/* Delete Dialog */}
+      <Dialog
+        isOpen={showDeleteDialog}
+        title={`Delete application for ${application.job_title}?`}
+        message={`This will remove "${application.job_title}" at ${application.company} and all associated data.`}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setShowDeleteDialog(false)}
+        confirmText="Delete"
+        cancelText="Cancel"
+        isDangerous={true}
+      />
     </div>
   );
 };
