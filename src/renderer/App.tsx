@@ -35,11 +35,17 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="screen-main">
       <Navigation currentPage={currentPage} onNavigate={setCurrentPage} />
-      <main className="flex-1 overflow-auto">
-        {renderPage()}
-      </main>
+      <div className="main-content">
+        <header className="header">
+          <h1 className="wordmark">Job Tracker</h1>
+          <div className="spacer"></div>
+        </header>
+        <div className="content">
+          {renderPage()}
+        </div>
+      </div>
     </div>
   );
 };
