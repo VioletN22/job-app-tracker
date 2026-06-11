@@ -41,9 +41,18 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, o
         paddingBottom: '16px',
         marginBottom: '16px',
         cursor: 'pointer',
+        position: 'relative',
+        paddingRight: '32px',
       }}
       onClick={() => onClick(application.id)}
-      className="hover:opacity-85 transition-opacity relative group"
+      onMouseEnter={(e) => {
+        const btn = e.currentTarget.querySelector('button');
+        if (btn) btn.style.opacity = '1';
+      }}
+      onMouseLeave={(e) => {
+        const btn = e.currentTarget.querySelector('button');
+        if (btn) btn.style.opacity = '0.3';
+      }}
     >
       {/* Delete button */}
       {onDelete && (
@@ -58,9 +67,9 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, o
             color: 'var(--muted)',
             border: 'none',
             cursor: 'pointer',
-            opacity: 0,
+            opacity: 0.3,
+            transition: 'opacity 0.2s',
           }}
-          className="group-hover:opacity-100 transition-opacity"
           title="Delete application"
         >
           <Trash2 size={16} />

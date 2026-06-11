@@ -114,7 +114,7 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
 
       {/* Applications Grid */}
       {!loading && filteredApplications.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', marginTop: '24px' }}>
           {filteredApplications.map((app) => (
             <ApplicationCard
               key={app.id}
