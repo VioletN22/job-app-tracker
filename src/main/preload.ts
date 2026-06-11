@@ -36,6 +36,14 @@ const electronAPI = {
     ingestJobListing: (jobListingText: string, company: string) =>
       ipcRenderer.invoke('claude:ingestJobListing', jobListingText, company),
   },
+
+  // Quick add operation
+  quickAddApplication: (company: string, jobTitle: string) =>
+    ipcRenderer.invoke('quickAddApplication', company, jobTitle),
+
+  // Legacy shortcuts for backwards compatibility
+  getAllApplications: (filters?: any) => ipcRenderer.invoke('db:getAllApplications', filters),
+  selectFile: () => ipcRenderer.invoke('file:selectFile'),
 };
 
 // Expose in main world

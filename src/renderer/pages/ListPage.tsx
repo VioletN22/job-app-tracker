@@ -45,6 +45,19 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
     }
   };
 
+  const handleQuickAdd = async (company: string, jobTitle: string) => {
+    try {
+      setIsProcessing(true);
+      await window.electronAPI.quickAddApplication(company, jobTitle);
+      await refresh(filters);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to add application';
+      throw new Error(errorMessage);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   // Filter applications based on current filters
   const filteredApplications = applications.filter((app) => {
     if (filters.company && !app.company.toLowerCase().includes(filters.company.toLowerCase())) {
@@ -97,6 +110,7 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
         <AddApplicationModal
           onClose={handleCloseModal}
           onSubmit={handleAddApplication}
+          onQuickAdd={handleQuickAdd}
           isLoading={isProcessing}
         />
       )}

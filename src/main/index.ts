@@ -23,7 +23,7 @@ import {
   getDefaultWorkflowForCompany,
 } from './database';
 import { extractJobListing, generateGuidance } from './claude';
-import { JobApplication, Workflow } from '../shared/types';
+import { JobApplication, Workflow, ExtractedJobData } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -292,6 +292,54 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
 
     // Step 6: Create initial stage history entry
     createStageHistory(application.id, 'applied', 'Application ingested and processed');
+
+    return {
+      success: true,
+      application,
+      workflow,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+});
+
+/**
+ * Quick add an application with just company and job title
+ */
+ipcMain.handle('quickAddApplication', async (_event, company: string, jobTitle: string) => {
+  try {
+    // Get or create default workflow for company
+    let workflow = getDefaultWorkflowForCompany(company);
+    if (!workflow) {
+      workflow = createWorkflow(company, `${company} Default Workflow`, ['applied', 'phone_screen', 'interview', 'offer'], true);
+    }
+
+    // Create minimal application entry
+    const minimalData: ExtractedJobData = {
+      company,
+      job_title: jobTitle,
+      location: '',
+      job_url: '',
+      salary_min: null,
+      salary_max: null,
+      equity: null,
+      benefits: null,
+      job_description: 'Job details to be added. You can paste the job description or link later and Claude will extract all the details.',
+      key_responsibilities: '',
+      required_skills: '',
+      nice_to_have_skills: '',
+      team_info: null,
+      hiring_timeline: null,
+      application_deadline: null,
+    };
+
+    const application = createApplication(minimalData, workflow.id);
+
+    // Create initial stage history entry
+    createStageHistory(application.id, 'applied', 'Quick added - details to be filled in');
 
     return {
       success: true,

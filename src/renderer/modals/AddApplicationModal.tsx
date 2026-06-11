@@ -1,27 +1,38 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
 
+declare global {
+  interface Window {
+    electronAPI: any;
+  }
+}
+
 interface AddApplicationModalProps {
   onClose: () => void;
   onSubmit: (jobListing: string) => Promise<void>;
+  onQuickAdd?: (company: string, jobTitle: string) => Promise<void>;
   isLoading?: boolean;
 }
 
 export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
   onClose,
   onSubmit,
+  onQuickAdd,
   isLoading = false,
 }) => {
+  const [mode, setMode] = useState<'quick' | 'ai'>('quick');
   const [jobListing, setJobListing] = useState('');
+  const [company, setCompany] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleFileUpload = async () => {
     try {
       setError(null);
-      const result = await window.electronAPI.file.selectFile();
-      if (result && result.content) {
-        setJobListing(result.content);
+      const content = await window.electronAPI.selectFile();
+      if (content) {
+        setJobListing(content);
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to upload file';
@@ -30,7 +41,33 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleQuickAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!company.trim() || !jobTitle.trim()) {
+      setError('Please enter both company name and job title');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      if (onQuickAdd) {
+        await onQuickAdd(company, jobTitle);
+      }
+      setCompany('');
+      setJobTitle('');
+      onClose();
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to add application';
+      setError(errorMessage);
+      console.error('Error adding application:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAISubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -54,73 +91,180 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl mx-4">
+    <div className="modal-overlay">
+      <div className="modal">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900">Add Job Application</h2>
+        <div className="modal-header">
+          <h1 className="modal-title">Add Job Application</h1>
+          <button onClick={onClose} className="modal-close" style={{ padding: 0 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--line)', padding: '0 24px' }}>
           <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 transition-colors"
+            onClick={() => setMode('quick')}
+            className={`navlink ${mode === 'quick' ? 'active' : ''}`}
+            style={{
+              flex: 1,
+              textAlign: 'center',
+              padding: '12px 16px',
+              marginBottom: 0,
+              borderBottom: mode === 'quick' ? '2px solid var(--accent)' : 'none',
+            }}
           >
-            <X className="w-6 h-6" />
+            Quick Add
+          </button>
+          <button
+            onClick={() => setMode('ai')}
+            className={`navlink ${mode === 'ai' ? 'active' : ''}`}
+            style={{
+              flex: 1,
+              textAlign: 'center',
+              padding: '12px 16px',
+              marginBottom: 0,
+              borderBottom: mode === 'ai' ? '2px solid var(--accent)' : 'none',
+            }}
+          >
+            Extract with AI
           </button>
         </div>
 
         {/* Body */}
-        <form onSubmit={handleSubmit} className="p-6">
-          {/* Error message */}
+        <div className="modal-body">
           {error && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            <div style={{ padding: '12px', backgroundColor: '#fee', borderLeft: '3px solid var(--accent)', marginBottom: '16px', color: 'var(--accent)', fontSize: '13px' }}>
               {error}
             </div>
           )}
 
-          {/* Textarea */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Job Listing
-            </label>
-            <textarea
-              value={jobListing}
-              onChange={(e) => setJobListing(e.target.value)}
-              placeholder="Paste the job listing here or click 'Upload File' to select a file..."
-              className="w-full h-64 p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            />
-          </div>
+          {mode === 'quick' ? (
+            // Quick Add Form
+            <form onSubmit={handleQuickAdd}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
+                  Company Name
+                </label>
+                <input
+                  type="text"
+                  value={company}
+                  onChange={(e) => setCompany(e.target.value)}
+                  placeholder="e.g., Google, Microsoft, Apple"
+                  style={{
+                    width: '100%',
+                    padding: '8px 0',
+                    borderBottom: '1px solid var(--ink)',
+                    backgroundColor: 'transparent',
+                    fontSize: '14px',
+                  }}
+                />
+              </div>
 
-          {/* Upload File button */}
-          <div className="mb-6">
-            <button
-              type="button"
-              onClick={handleFileUpload}
-              className="px-4 py-2 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              Upload File
-            </button>
-          </div>
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
+                  Job Title/Role
+                </label>
+                <input
+                  type="text"
+                  value={jobTitle}
+                  onChange={(e) => setJobTitle(e.target.value)}
+                  placeholder="e.g., Senior Software Engineer"
+                  style={{
+                    width: '100%',
+                    padding: '8px 0',
+                    borderBottom: '1px solid var(--ink)',
+                    backgroundColor: 'transparent',
+                    fontSize: '14px',
+                  }}
+                />
+              </div>
 
-          {/* Footer */}
-          <div className="flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-              disabled={isSubmitting || isLoading}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className={`px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium ${
-                (isSubmitting || isLoading) ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-              disabled={isSubmitting || isLoading}
-            >
-              {isSubmitting || isLoading ? 'Adding...' : 'Add Application'}
-            </button>
-          </div>
-        </form>
+              <p style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '24px' }}>
+                You can add the job description, link, and other details after creation. Claude will help fill in the context.
+              </p>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  style={{ flex: 1, marginRight: '8px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="accent"
+                  style={{ flex: 1 }}
+                  disabled={isSubmitting || isLoading}
+                >
+                  {isSubmitting || isLoading ? 'Adding...' : 'Quick Add'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            // AI Extract Form
+            <form onSubmit={handleAISubmit}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
+                  Job Listing
+                </label>
+                <textarea
+                  value={jobListing}
+                  onChange={(e) => setJobListing(e.target.value)}
+                  placeholder="Paste the job listing here, or upload a screenshot/PDF..."
+                  style={{
+                    width: '100%',
+                    height: '240px',
+                    padding: '12px',
+                    backgroundColor: 'var(--panel)',
+                    border: '1px solid var(--line)',
+                    fontFamily: 'inherit',
+                    fontSize: '14px',
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <button
+                  type="button"
+                  onClick={handleFileUpload}
+                  style={{
+                    padding: '8px 12px',
+                    backgroundColor: 'transparent',
+                    border: '1px solid var(--line)',
+                    fontSize: '11px',
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    color: 'var(--muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Upload File
+                </button>
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  style={{ flex: 1, marginRight: '8px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="accent"
+                  style={{ flex: 1 }}
+                  disabled={isSubmitting || isLoading}
+                >
+                  {isSubmitting || isLoading ? 'Extracting...' : 'Extract with AI'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );
