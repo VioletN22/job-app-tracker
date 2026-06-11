@@ -412,10 +412,10 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
       console.log('Guidance generation skipped:', guidanceError);
     }
 
-    // Step 6: Create initial stage history entry
+    // Step 6: Create initial stage history entry (start with 'started' status)
     createStageHistory(
       application.id,
-      'applied',
+      'started',
       hasGuidance ? 'Application ingested with AI extraction' : 'Application added - edit details as needed'
     );
 
@@ -468,8 +468,8 @@ ipcMain.handle('quickAddApplication', async (_event, company: string, jobTitle: 
 
     const application = createApplication(minimalData, workflow.id);
 
-    // Create initial stage history entry
-    createStageHistory(application.id, 'applied', 'Quick added - details to be filled in');
+    // Create initial stage history entry (start with 'started' status)
+    createStageHistory(application.id, 'started', 'Quick added - details to be filled in');
 
     return {
       success: true,

@@ -1,13 +1,14 @@
 import React from 'react';
-import { MapPin, DollarSign, Calendar } from 'lucide-react';
+import { MapPin, DollarSign, Calendar, Trash2 } from 'lucide-react';
 import { JobApplication } from '../../shared/types';
 
 interface ApplicationCardProps {
   application: JobApplication;
   onClick: (id: string) => void;
+  onDelete?: (id: string) => void;
 }
 
-export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, onClick }) => {
+export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, onClick, onDelete }) => {
   const formatDate = (dateString: string | null): string => {
     if (!dateString) return '';
     try {
@@ -26,44 +27,108 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, o
     return minK || maxK;
   };
 
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (window.confirm(`Delete application for ${application.job_title} at ${application.company}?`)) {
+      onDelete?.(application.id);
+    }
+  };
+
   return (
     <div
+      style={{
+        borderBottom: '1px solid var(--line)',
+        paddingBottom: '16px',
+        marginBottom: '16px',
+        cursor: 'pointer',
+      }}
       onClick={() => onClick(application.id)}
-      className="bg-white p-4 rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all cursor-pointer relative"
+      className="hover:opacity-85 transition-opacity relative group"
     >
+      {/* Delete button */}
+      {onDelete && (
+        <button
+          onClick={handleDelete}
+          style={{
+            position: 'absolute',
+            top: '0',
+            right: '0',
+            padding: '4px 8px',
+            backgroundColor: 'transparent',
+            color: 'var(--muted)',
+            border: 'none',
+            cursor: 'pointer',
+            opacity: 0,
+          }}
+          className="group-hover:opacity-100 transition-opacity"
+          title="Delete application"
+        >
+          <Trash2 size={16} />
+        </button>
+      )}
+
       {/* Stage badge */}
-      <div className="absolute top-4 right-4 px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-medium">
+      <div
+        style={{
+          display: 'inline-block',
+          padding: '4px 8px',
+          backgroundColor: 'var(--panel)',
+          color: 'var(--muted)',
+          fontSize: '11px',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          fontWeight: 600,
+          marginBottom: '8px',
+        }}
+      >
         {application.current_stage}
       </div>
 
       {/* Title */}
-      <h3 className="text-lg font-semibold text-gray-900 pr-24 mb-1">
+      <h3
+        style={{
+          fontSize: '16px',
+          fontWeight: 700,
+          color: 'var(--ink)',
+          marginTop: '8px',
+          marginBottom: '4px',
+          paddingRight: '24px',
+        }}
+      >
         {application.job_title}
       </h3>
 
       {/* Company */}
-      <p className="text-sm text-gray-600 mb-3">{application.company}</p>
+      <p
+        style={{
+          fontSize: '13px',
+          color: 'var(--muted)',
+          marginBottom: '12px',
+        }}
+      >
+        {application.company}
+      </p>
 
       {/* Location */}
       {application.location && (
-        <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
-          <MapPin className="w-4 h-4 text-gray-400" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--muted)', marginBottom: '8px' }}>
+          <MapPin size={14} />
           <span>{application.location}</span>
         </div>
       )}
 
       {/* Salary */}
       {(application.salary_min || application.salary_max) && (
-        <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
-          <DollarSign className="w-4 h-4 text-gray-400" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--muted)', marginBottom: '8px' }}>
+          <DollarSign size={14} />
           <span>{formatSalary(application.salary_min, application.salary_max)}</span>
         </div>
       )}
 
       {/* Application deadline */}
       {application.application_deadline && (
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <Calendar className="w-4 h-4 text-gray-400" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--muted)' }}>
+          <Calendar size={14} />
           <span>{formatDate(application.application_deadline)}</span>
         </div>
       )}

@@ -68,6 +68,16 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
     }
   };
 
+  const handleDeleteApplication = async (applicationId: string) => {
+    try {
+      await window.electronAPI.db.deleteApplication(applicationId);
+      await refresh(filters);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete application';
+      alert(`Error: ${errorMessage}`);
+    }
+  };
+
   // Filter applications based on current filters
   const filteredApplications = applications.filter((app) => {
     if (filters.company && !app.company.toLowerCase().includes(filters.company.toLowerCase())) {
@@ -104,12 +114,13 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
 
       {/* Applications Grid */}
       {!loading && filteredApplications.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
           {filteredApplications.map((app) => (
             <ApplicationCard
               key={app.id}
               application={app}
               onClick={onSelectApplication}
+              onDelete={handleDeleteApplication}
             />
           ))}
         </div>
