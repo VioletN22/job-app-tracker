@@ -17,35 +17,56 @@ if (!globalThis.fetch) {
 // Claude authentication using session tokens (like Claude CLI)
 let client: Anthropic | null = null;
 
-function getAuthTokenPath(): string {
-  const appData = app.getPath('userData');
-  return path.join(appData, '.claude', 'auth-token');
-}
-
 function getStoredAuthToken(): string | null {
   try {
-    const tokenPath = getAuthTokenPath();
-    if (fs.existsSync(tokenPath)) {
-      return fs.readFileSync(tokenPath, 'utf-8').trim();
+    // Check multiple possible Claude CLI token locations
+    const homeDir = app.getPath('home');
+    const possiblePaths = [
+      // macOS
+      path.join(homeDir, 'Library', 'Application Support', 'Claude', 'auth.json'),
+      path.join(homeDir, '.config', 'claude', 'auth.json'),
+      // Linux/other
+      path.join(homeDir, '.claude', 'auth.json'),
+      path.join(homeDir, '.claude', 'auth-token'),
+      // Windows
+      path.join(homeDir, 'AppData', 'Local', 'Claude', 'auth.json'),
+    ];
+
+    for (const tokenPath of possiblePaths) {
+      if (fs.existsSync(tokenPath)) {
+        const content = fs.readFileSync(tokenPath, 'utf-8').trim();
+
+        // If it's JSON, extract the token
+        if (content.startsWith('{')) {
+          try {
+            const data = JSON.parse(content);
+            const token = data.token || data.apiKey || data.authToken;
+            if (token) {
+              console.log('[Claude Auth] Found token at:', tokenPath);
+              return token;
+            }
+          } catch (e) {
+            // Not valid JSON, try as plain token
+            if (content) {
+              console.log('[Claude Auth] Found token at:', tokenPath);
+              return content;
+            }
+          }
+        } else if (content) {
+          // Plain text token
+          console.log('[Claude Auth] Found token at:', tokenPath);
+          return content;
+        }
+      }
     }
+
+    console.log('[Claude Auth] No token found in any location');
   } catch (error) {
     console.error('Error reading auth token:', error);
   }
   return null;
 }
 
-function saveAuthToken(token: string): void {
-  try {
-    const tokenPath = getAuthTokenPath();
-    const tokenDir = path.dirname(tokenPath);
-    if (!fs.existsSync(tokenDir)) {
-      fs.mkdirSync(tokenDir, { recursive: true });
-    }
-    fs.writeFileSync(tokenPath, token, { mode: 0o600 });
-  } catch (error) {
-    console.error('Error saving auth token:', error);
-  }
-}
 
 function getClient(): Anthropic {
   if (!client) {
