@@ -437,6 +437,34 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
 });
 
 /**
+ * Check if Claude is authenticated
+ */
+ipcMain.handle('claude:checkAuth', async () => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+
+    const tokenPath = path.join(app.getPath('userData'), '.claude', 'auth-token');
+    const hasToken = fs.existsSync(tokenPath);
+
+    console.log('[Claude Auth] Token path:', tokenPath);
+    console.log('[Claude Auth] Token exists:', hasToken);
+
+    return {
+      authenticated: hasToken,
+      tokenPath: hasToken ? tokenPath : null,
+    };
+  } catch (error) {
+    console.error('[Claude Auth] Error checking auth:', error);
+    return {
+      authenticated: false,
+      tokenPath: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+});
+
+/**
  * Quick add an application with just company and job title
  */
 ipcMain.handle('quickAddApplication', async (_event, company: string, jobTitle: string) => {

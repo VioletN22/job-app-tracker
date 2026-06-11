@@ -35,6 +35,7 @@ const electronAPI = {
   claude: {
     ingestJobListing: (jobListingText: string, company: string) =>
       ipcRenderer.invoke('claude:ingestJobListing', jobListingText, company),
+    checkAuth: () => ipcRenderer.invoke('claude:checkAuth'),
   },
 
   // Quick add operation
