@@ -1,5 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ExtractedJobData, GuidanceContent } from "../shared/types";
+import * as fs from 'fs';
+import * as path from 'path';
+import { app } from 'electron';
 
 // Polyfill fetch, Headers, and FormData if not available (for Electron environment)
 if (!globalThis.fetch) {
@@ -11,20 +14,58 @@ if (!globalThis.fetch) {
   globalThis.Request = fetch.Request;
 }
 
-// Create Anthropic client with subscription credentials
+// Claude authentication using session tokens (like Claude CLI)
 let client: Anthropic | null = null;
+
+function getAuthTokenPath(): string {
+  const appData = app.getPath('userData');
+  return path.join(appData, '.claude', 'auth-token');
+}
+
+function getStoredAuthToken(): string | null {
+  try {
+    const tokenPath = getAuthTokenPath();
+    if (fs.existsSync(tokenPath)) {
+      return fs.readFileSync(tokenPath, 'utf-8').trim();
+    }
+  } catch (error) {
+    console.error('Error reading auth token:', error);
+  }
+  return null;
+}
+
+function saveAuthToken(token: string): void {
+  try {
+    const tokenPath = getAuthTokenPath();
+    const tokenDir = path.dirname(tokenPath);
+    if (!fs.existsSync(tokenDir)) {
+      fs.mkdirSync(tokenDir, { recursive: true });
+    }
+    fs.writeFileSync(tokenPath, token, { mode: 0o600 });
+  } catch (error) {
+    console.error('Error saving auth token:', error);
+  }
+}
 
 function getClient(): Anthropic {
   if (!client) {
-    // Initialize Anthropic client
-    // Supports both API key and subscription-based authentication
-    const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+    // Try to get stored session token (from claude login)
+    const sessionToken = getStoredAuthToken();
 
-    client = new Anthropic({
-      apiKey: apiKey || undefined,
-      // If no API key, the SDK will look for authentication in the environment
-      // This allows for subscription-based usage through other means
-    });
+    if (sessionToken) {
+      // Use stored session token
+      client = new Anthropic({
+        apiKey: sessionToken,
+      });
+    } else {
+      // No token found - user needs to authenticate
+      throw new Error(
+        'Claude authentication required.\n\n' +
+        'To set up Extract with AI, authenticate with Claude:\n' +
+        '  claude login\n\n' +
+        'Then restart the app. Your subscription will be used for AI features.'
+      );
+    }
   }
   return client;
 }

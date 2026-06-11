@@ -12,7 +12,6 @@ interface WorkflowForm {
 export const SettingsPage: React.FC = () => {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [showAddWorkflow, setShowAddWorkflow] = useState(false);
-  const [claudeAuth, setClaudeAuth] = useState('');
   const [form, setForm] = useState<WorkflowForm>({
     company: '',
     name: '',
@@ -257,54 +256,42 @@ export const SettingsPage: React.FC = () => {
       <div className="bg-white p-6 rounded-lg border border-gray-200 mt-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Claude AI Setup</h3>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              API Key (Optional - for Extract with AI)
-            </label>
-            <input
-              type="password"
-              value={claudeAuth}
-              onChange={(e) => setClaudeAuth(e.target.value)}
-              placeholder="sk-ant-..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-sm text-gray-600 mt-2">
-              Optional: Set your Anthropic API key to enable Claude AI extraction of job listings.
-              Your subscription plan will be billed per token used.
-            </p>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+          <p className="text-sm text-blue-900 font-medium">
+            To enable Extract with AI, authenticate with Claude using your subscription:
+          </p>
+
+          <div className="bg-white p-3 rounded border border-blue-100 font-mono text-sm text-gray-800">
+            claude login
           </div>
 
-          <div>
-            <button
-              onClick={() => {
-                if (claudeAuth) {
-                  // Set environment variable
-                  const apiKey = claudeAuth;
-                  // In a real app, this would be sent to the main process
-                  alert('API key will be used for Claude AI features (requires app restart)');
-                } else {
-                  alert('Please enter an API key or leave it empty to skip');
-                }
-              }}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-            >
-              Save Claude Settings
-            </button>
-          </div>
+          <p className="text-sm text-blue-900">
+            This will open Claude in your browser. Sign in with your account, then return to this app. Your subscription will be used for all AI features - no API keys or per-token billing needed.
+          </p>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-4">
-            <p className="text-sm text-blue-900">
-              <strong>How Extract with AI works:</strong>
-            </p>
-            <ul className="text-sm text-blue-900 mt-2 space-y-1 ml-4 list-disc">
-              <li>Paste a job listing into the Extract with AI tab</li>
-              <li>Claude analyzes the job description</li>
-              <li>Automatically extracts company, role, skills, and more</li>
-              <li>Creates a complete application entry</li>
-              <li>Without API key: you can manually fill in job details</li>
-            </ul>
-          </div>
+          <p className="text-sm text-blue-900">
+            <strong>What happens next:</strong>
+          </p>
+          <ul className="text-sm text-blue-900 space-y-1 ml-4 list-disc">
+            <li>Open your terminal</li>
+            <li>Run: <code className="bg-white px-2 py-1 rounded">claude login</code></li>
+            <li>Authenticate with your Claude account</li>
+            <li>Restart this app</li>
+            <li>Extract with AI will work automatically</li>
+          </ul>
+        </div>
+
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-4">
+          <p className="text-sm text-green-900 font-medium mb-2">
+            ✓ How Extract with AI Works:
+          </p>
+          <ul className="text-sm text-green-900 space-y-1 ml-4 list-disc">
+            <li>Paste a job listing in the "Extract with AI" tab</li>
+            <li>Claude analyzes the full job description</li>
+            <li>Automatically extracts: company, role, location, skills, responsibilities, etc.</li>
+            <li>Creates a complete application entry ready to track</li>
+            <li>Uses your Claude subscription (unlimited with your plan)</li>
+          </ul>
         </div>
       </div>
     </div>
