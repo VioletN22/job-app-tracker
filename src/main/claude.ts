@@ -22,7 +22,7 @@ let client: Anthropic | null = null;
  * Run Claude via the CLI (uses subscription authentication from `claude login`)
  * This is the same approach Inkd uses - spawns the claude command directly
  */
-function runClaudeCLI(prompt: string, timeoutMs = 60000): Promise<string> {
+export function runClaudeCLI(prompt: string, timeoutMs = 60000): Promise<string> {
   const b64 = Buffer.from(prompt, "utf8").toString("base64");
 
   // Use the same pattern as Inkd - strip API key env vars to force subscription mode
@@ -30,7 +30,9 @@ function runClaudeCLI(prompt: string, timeoutMs = 60000): Promise<string> {
     `export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; ` +
     `CLAUDE="$(command -v claude || echo "$HOME/.local/bin/claude")"; ` +
     `cd /tmp && printf %s '${b64}' | base64 --decode | ` +
-    `env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "$CLAUDE" -p --output-format text`;
+    `env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN ` +
+    `-u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION ` +
+    `"$CLAUDE" -p --output-format text`;
 
   return new Promise((resolve, reject) => {
     const proc = spawn("/bin/sh", ["-c", cmd]);

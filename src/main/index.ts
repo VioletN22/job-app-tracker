@@ -25,7 +25,7 @@ import {
   getAttachmentsForApplication,
   deleteAttachment,
 } from './database';
-import { extractJobListing, generateGuidance, getClient } from './claude';
+import { extractJobListing, generateGuidance, runClaudeCLI } from './claude';
 import { JobApplication, Workflow, ExtractedJobData } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -437,37 +437,24 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
 });
 
 /**
- * Check if Claude is authenticated by trying to use the API
+ * Check if Claude is authenticated by running the Claude CLI
+ * (subscription auth from `claude login` - same approach as Inkd)
  */
 ipcMain.handle('claude:checkAuth', async () => {
   try {
-    console.log('[Claude Auth] Testing authentication by calling API...');
+    console.log('[Claude Auth] Testing authentication via Claude CLI...');
 
-    // Try to get the client - this will test if auth works
-    const client = getClient();
+    const reply = await runClaudeCLI('Reply with exactly: ok', 60000);
+    console.log('[Claude Auth] ✓ CLI replied:', reply.slice(0, 100));
 
-    // Try a simple API call to verify authentication
-    console.log('[Claude Auth] Making test API call...');
-    const response = await client.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 10,
-      messages: [
-        {
-          role: 'user',
-          content: 'hi',
-        },
-      ],
-    });
-
-    console.log('[Claude Auth] ✓ API call successful! Authentication works.');
     return {
       authenticated: true,
       tokenPath: null,
+      method: 'subscription (claude CLI)',
     };
   } catch (error) {
-    console.error('[Claude Auth] Authentication test failed:', error);
+    console.error('[Claude Auth] CLI authentication test failed:', error);
     const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error('[Claude Auth] Error details:', errorMsg);
 
     return {
       authenticated: false,
