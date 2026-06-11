@@ -19,6 +19,8 @@ export const SettingsPage: React.FC = () => {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [showAddWorkflow, setShowAddWorkflow] = useState(false);
   const [claudeAuth, setClaudeAuth] = useState<ClaudeAuthStatus | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(false);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [form, setForm] = useState<WorkflowForm>({
     company: '',
     name: '',
@@ -35,14 +37,25 @@ export const SettingsPage: React.FC = () => {
 
   const checkClaudeAuth = async () => {
     try {
+      setCheckingAuth(true);
+      setAuthMessage(null);
       const status = await window.electronAPI.claude.checkAuth();
       setClaudeAuth(status);
+
+      if (status.authenticated) {
+        setAuthMessage('✓ Claude authenticated! Extract with AI is ready to use.');
+      } else {
+        setAuthMessage('Claude not authenticated yet. Run "claude login" in your terminal.');
+      }
     } catch (err) {
       console.error('Error checking Claude auth:', err);
+      setAuthMessage('Error checking authentication status');
       setClaudeAuth({
         authenticated: false,
         error: 'Failed to check Claude authentication status',
       });
+    } finally {
+      setCheckingAuth(false);
     }
   };
 
@@ -233,23 +246,37 @@ export const SettingsPage: React.FC = () => {
             </div>
             <button
               onClick={() => checkClaudeAuth()}
+              disabled={checkingAuth}
               style={{
                 padding: '8px 16px',
-                backgroundColor: 'var(--accent)',
+                backgroundColor: checkingAuth ? 'var(--muted)' : 'var(--accent)',
                 color: '#fff',
                 border: 'none',
                 borderRadius: '4px',
                 fontSize: '12px',
                 fontWeight: 600,
-                cursor: 'pointer',
+                cursor: checkingAuth ? 'not-allowed' : 'pointer',
                 textTransform: 'uppercase',
                 letterSpacing: '0.05em',
+                opacity: checkingAuth ? 0.6 : 1,
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+              onMouseEnter={(e) => !checkingAuth && (e.currentTarget.style.opacity = '0.9')}
               onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
             >
-              Check Status
+              {checkingAuth ? 'Checking...' : 'Check Status'}
             </button>
+            {authMessage && (
+              <p
+                style={{
+                  fontSize: '12px',
+                  color: claudeAuth?.authenticated ? '#16a34a' : '#ca8a04',
+                  marginTop: '8px',
+                  fontWeight: 500,
+                }}
+              >
+                {authMessage}
+              </p>
+            )}
           </div>
         )}
       </div>
