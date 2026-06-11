@@ -437,29 +437,42 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
 });
 
 /**
- * Check if Claude is authenticated
+ * Check if Claude is authenticated by trying to use the API
  */
 ipcMain.handle('claude:checkAuth', async () => {
   try {
-    const fs = require('fs');
-    const path = require('path');
+    console.log('[Claude Auth] Testing authentication by calling API...');
 
-    const tokenPath = path.join(app.getPath('userData'), '.claude', 'auth-token');
-    const hasToken = fs.existsSync(tokenPath);
+    // Try to get the client - this will test if auth works
+    const client = getClient();
 
-    console.log('[Claude Auth] Token path:', tokenPath);
-    console.log('[Claude Auth] Token exists:', hasToken);
+    // Try a simple API call to verify authentication
+    console.log('[Claude Auth] Making test API call...');
+    const response = await client.messages.create({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 10,
+      messages: [
+        {
+          role: 'user',
+          content: 'hi',
+        },
+      ],
+    });
 
+    console.log('[Claude Auth] ✓ API call successful! Authentication works.');
     return {
-      authenticated: hasToken,
-      tokenPath: hasToken ? tokenPath : null,
+      authenticated: true,
+      tokenPath: null,
     };
   } catch (error) {
-    console.error('[Claude Auth] Error checking auth:', error);
+    console.error('[Claude Auth] Authentication test failed:', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error('[Claude Auth] Error details:', errorMsg);
+
     return {
       authenticated: false,
       tokenPath: null,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMsg,
     };
   }
 });
