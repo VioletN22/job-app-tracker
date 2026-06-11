@@ -78,13 +78,22 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
 
     try {
       setIsSubmitting(true);
-      await onSubmit(jobListing);
+      console.log('Starting Extract with AI...');
+
+      const result = await onSubmit(jobListing);
+      console.log('Extract result:', result);
+
       setJobListing('');
       onClose();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to add application';
+      console.error('Error in Extract with AI:', err);
       setError(errorMessage);
-      console.error('Error adding application:', err);
+
+      // Show alert for immediate visibility
+      setTimeout(() => {
+        alert(`Extract with AI Error:\n\n${errorMessage}\n\nPlease check Settings > Claude AI Setup or try Quick Add instead.`);
+      }, 100);
     } finally {
       setIsSubmitting(false);
     }
@@ -204,7 +213,24 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
             </form>
           ) : (
             // AI Extract Form
-            <form onSubmit={handleAISubmit}>
+            <>
+              {isSubmitting && (
+                <div style={{ padding: '24px', textAlign: 'center', backgroundColor: 'var(--panel)', borderRadius: '4px', marginBottom: '16px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>Extracting job details...</div>
+                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                    <div style={{ width: '8px', height: '8px', backgroundColor: 'var(--accent)', borderRadius: '50%', animation: 'pulse 1.5s infinite' }}></div>
+                    <div style={{ width: '8px', height: '8px', backgroundColor: 'var(--accent)', borderRadius: '50%', animation: 'pulse 1.5s infinite 0.3s' }}></div>
+                    <div style={{ width: '8px', height: '8px', backgroundColor: 'var(--accent)', borderRadius: '50%', animation: 'pulse 1.5s infinite 0.6s' }}></div>
+                  </div>
+                  <style>{`
+                    @keyframes pulse {
+                      0%, 100% { opacity: 0.3; }
+                      50% { opacity: 1; }
+                    }
+                  `}</style>
+                </div>
+              )}
+              <form onSubmit={handleAISubmit} style={{ display: isSubmitting ? 'none' : 'block' }}>
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
                   Job Listing
@@ -263,6 +289,7 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
                 </button>
               </div>
             </form>
+            </>
           )}
         </div>
       </div>
