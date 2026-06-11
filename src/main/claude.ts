@@ -264,7 +264,7 @@ Return ONLY the JSON object, no other text.`;
   for (const field of requiredFields) {
     if (!extractedData[field]) {
       throw new Error(
-        `Missing required field in extraction: ${field}. Response: ${textContent.text}`
+        `Missing required field in extraction: ${field}. Response: ${responseText}`
       );
     }
   }
@@ -382,7 +382,7 @@ No other text, only valid JSON.`;
   for (const section of requiredSections) {
     if (!guidanceData[section] || typeof guidanceData[section] !== "string") {
       throw new Error(
-        `Missing or invalid guidance section: ${section}. Response: ${textContent.text}`
+        `Missing or invalid guidance section: ${section}. Response: ${responseText}`
       );
     }
   }
