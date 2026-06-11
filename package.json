@@ -20,6 +20,7 @@
     "@anthropic-ai/sdk": "^0.104.1",
     "better-sqlite3": "^12.10.0",
     "electron-is-dev": "^3.0.1",
+    "lucide-react": "^1.17.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "uuid": "^14.0.0"
