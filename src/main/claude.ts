@@ -11,15 +11,19 @@ if (!globalThis.fetch) {
   globalThis.Request = fetch.Request;
 }
 
-// Create Anthropic client
-// Uses local Claude subscription (no API key needed)
+// Create Anthropic client with subscription credentials
 let client: Anthropic | null = null;
 
 function getClient(): Anthropic {
   if (!client) {
-    // Initialize with optional API key - works with Claude subscription
+    // Initialize Anthropic client
+    // Supports both API key and subscription-based authentication
+    const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+
     client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY || 'sk-placeholder',
+      apiKey: apiKey || undefined,
+      // If no API key, the SDK will look for authentication in the environment
+      // This allows for subscription-based usage through other means
     });
   }
   return client;

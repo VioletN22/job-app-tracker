@@ -341,39 +341,85 @@ ipcMain.handle('attachment:delete', async (_event, attachmentId: string) => {
 ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string, company: string) => {
   try {
     // Step 1: Extract job listing data
-    const extractedData = await extractJobListing(jobListingText);
+    let extractedData: ExtractedJobData;
+    try {
+      extractedData = await extractJobListing(jobListingText);
+    } catch (claudeError) {
+      // If Claude extraction fails, create basic data from the input
+      // This allows Quick Add via paste to still work
+      const errorMsg = claudeError instanceof Error ? claudeError.message : String(claudeError);
+
+      // Try to extract company from input if not provided
+      const finalCompany = company && company !== 'Unknown Company' ? company : 'Unknown Company';
+
+      // Create minimal data - user can edit later
+      extractedData = {
+        company: finalCompany,
+        job_title: 'Job Title (edit me)',
+        location: '',
+        job_url: '',
+        salary_min: null,
+        salary_max: null,
+        equity: null,
+        benefits: null,
+        job_description: jobListingText || 'Job details to be filled in',
+        key_responsibilities: '',
+        required_skills: '',
+        nice_to_have_skills: '',
+        team_info: null,
+        hiring_timeline: null,
+        application_deadline: null,
+      };
+    }
 
     // Step 2: Get or create default workflow for company
-    let workflow = getDefaultWorkflowForCompany(company);
+    let workflow = getDefaultWorkflowForCompany(extractedData.company);
     if (!workflow) {
-      workflow = createWorkflow(company, `${company} Default Workflow`, ['applied', 'phone_screen', 'interview', 'offer'], true);
+      workflow = createWorkflow(
+        extractedData.company,
+        `${extractedData.company} Default Workflow`,
+        ['applied', 'phone_screen', 'interview', 'offer'],
+        true
+      );
     }
 
     // Step 3: Create application with extracted data
     const application = createApplication(extractedData, workflow.id);
 
-    // Step 4: Generate guidance for all stages
-    const guidanceContent = await generateGuidance(
-      extractedData.company,
-      extractedData.job_title,
-      extractedData.location,
-      extractedData.job_description,
-      extractedData.key_responsibilities,
-      extractedData.required_skills
-    );
+    // Step 4: Try to generate guidance (optional - doesn't block if Claude unavailable)
+    let hasGuidance = false;
+    try {
+      const guidanceContent = await generateGuidance(
+        extractedData.company,
+        extractedData.job_title,
+        extractedData.location,
+        extractedData.job_description,
+        extractedData.key_responsibilities,
+        extractedData.required_skills
+      );
 
-    // Step 5: Create guidance docs for each stage in workflow
-    for (const stage of workflow.stages) {
-      createGuidanceDocs(application.id, stage, guidanceContent);
+      // Step 5: Create guidance docs for each stage in workflow
+      for (const stage of workflow.stages) {
+        createGuidanceDocs(application.id, stage, guidanceContent);
+      }
+      hasGuidance = true;
+    } catch (guidanceError) {
+      // Guidance generation is optional - continue without it
+      console.log('Guidance generation skipped:', guidanceError);
     }
 
     // Step 6: Create initial stage history entry
-    createStageHistory(application.id, 'applied', 'Application ingested and processed');
+    createStageHistory(
+      application.id,
+      'applied',
+      hasGuidance ? 'Application ingested with AI extraction' : 'Application added - edit details as needed'
+    );
 
     return {
       success: true,
       application,
       workflow,
+      hasGuidance,
     };
   } catch (error) {
     return {
