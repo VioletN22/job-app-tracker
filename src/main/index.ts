@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
-import isDev from 'electron-is-dev';
+
+// Simple dev check without ESM import
+const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 import {
   initializeDatabase,
   closeDatabase,

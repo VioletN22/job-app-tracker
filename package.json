@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
     "dev:vite": "vite",
-    "dev:electron": "npm run build:electron && electron dist/main/index.js",
+    "dev:electron": "npm run build:electron && ~/.electron/Electron.app/Electron.app/Contents/MacOS/Electron dist/main/index.js",
     "build": "npm run build:vite && npm run build:electron",
     "build:vite": "vite build",
     "build:electron": "tsc",
@@ -21,6 +21,7 @@
     "better-sqlite3": "^11.10.0",
     "electron-is-dev": "^3.0.1",
     "lucide-react": "^1.17.0",
+    "node-fetch": "^2.7.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "uuid": "^14.0.0"

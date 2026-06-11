@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { app } from 'electron';
 import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import {
   JobApplication,
   Workflow,
@@ -136,7 +136,7 @@ export function createWorkflow(
   isDefault: boolean
 ): Workflow {
   const database = getDatabase();
-  const id = uuidv4();
+  const id = randomUUID();
   const createdAt = new Date().toISOString();
   const stagesJson = JSON.stringify(stages);
 
@@ -269,7 +269,7 @@ export function createApplication(
   notes: string | null = null
 ): JobApplication {
   const database = getDatabase();
-  const id = uuidv4();
+  const id = randomUUID();
   const now = new Date().toISOString();
 
   const stmt = database.prepare(`
@@ -461,7 +461,7 @@ export function createStageHistory(
   guidance: string | null = null
 ): StageHistory {
   const database = getDatabase();
-  const id = uuidv4();
+  const id = randomUUID();
   const enteredAt = new Date().toISOString();
 
   const stmt = database.prepare(`
@@ -564,7 +564,7 @@ export function createGuidanceDocs(
   `);
 
   for (const guidanceType of guidanceTypes) {
-    const id = uuidv4();
+    const id = randomUUID();
     const contentValue = content[guidanceType];
 
     if (contentValue) {

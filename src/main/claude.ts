@@ -1,6 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ExtractedJobData, GuidanceContent } from "../shared/types";
 
+// Polyfill fetch if not available (for Electron environment)
+if (!globalThis.fetch) {
+  const fetchPonyfill = require('node-fetch');
+  globalThis.fetch = fetchPonyfill;
+}
+
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
