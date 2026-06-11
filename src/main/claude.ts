@@ -111,16 +111,23 @@ function getStoredAuthToken(): string | null {
 
 function getClient(): Anthropic {
   if (!client) {
-    // Try to get stored session token (from claude login)
-    const sessionToken = getStoredAuthToken();
+    try {
+      // First try to get stored session token
+      const sessionToken = getStoredAuthToken();
 
-    if (sessionToken) {
-      // Use stored session token
-      client = new Anthropic({
-        apiKey: sessionToken,
-      });
-    } else {
-      // No token found - user needs to authenticate
+      if (sessionToken) {
+        console.log('[Claude Auth] Using stored session token');
+        client = new Anthropic({
+          apiKey: sessionToken,
+        });
+      } else {
+        // No token file found - try SDK's default auth chain
+        // This includes environment variables and other default methods
+        console.log('[Claude Auth] No token file found, trying SDK default auth...');
+        client = new Anthropic();
+      }
+    } catch (error) {
+      console.error('[Claude Auth] Error initializing Anthropic client:', error);
       throw new Error(
         'Claude authentication required.\n\n' +
         'To set up Extract with AI, authenticate with Claude:\n' +
