@@ -1,10 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ExtractedJobData, GuidanceContent } from "../shared/types";
 
-// Polyfill fetch if not available (for Electron environment)
+// Polyfill fetch, Headers, and FormData if not available (for Electron environment)
 if (!globalThis.fetch) {
-  const fetchPonyfill = require('node-fetch');
-  globalThis.fetch = fetchPonyfill;
+  const fetch = require('node-fetch');
+  globalThis.fetch = fetch;
+  globalThis.Headers = fetch.Headers;
+  globalThis.FormData = require('form-data');
+  globalThis.Response = fetch.Response;
+  globalThis.Request = fetch.Request;
 }
 
 // Create Anthropic client
