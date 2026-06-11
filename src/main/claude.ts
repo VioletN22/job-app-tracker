@@ -3,6 +3,7 @@ import { ExtractedJobData, GuidanceContent } from "../shared/types";
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
+import { spawn } from 'child_process';
 
 // Polyfill fetch, Headers, and FormData if not available (for Electron environment)
 if (!globalThis.fetch) {
@@ -16,6 +17,43 @@ if (!globalThis.fetch) {
 
 // Claude authentication using session tokens (like Claude CLI)
 let client: Anthropic | null = null;
+
+/**
+ * Run Claude via the CLI (uses subscription authentication from `claude login`)
+ * This is the same approach Inkd uses - spawns the claude command directly
+ */
+function runClaudeCLI(prompt: string, timeoutMs = 60000): Promise<string> {
+  const b64 = Buffer.from(prompt, "utf8").toString("base64");
+
+  // Use the same pattern as Inkd - strip API key env vars to force subscription mode
+  const cmd =
+    `export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; ` +
+    `CLAUDE="$(command -v claude || echo "$HOME/.local/bin/claude")"; ` +
+    `cd /tmp && printf %s '${b64}' | base64 --decode | ` +
+    `env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "$CLAUDE" -p --output-format text`;
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn("/bin/sh", ["-c", cmd]);
+    let stdout = "";
+    let stderr = "";
+
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error("claude subprocess timed out"));
+    }, timeoutMs);
+
+    proc.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
+    proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
+    proc.on("close", (code: number) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`claude CLI exited ${code}: ${stderr.slice(0, 400)}`));
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+  });
+}
 
 function getStoredAuthToken(): string | null {
   try {
@@ -141,7 +179,7 @@ export function getClient(): Anthropic {
 
 /**
  * Extracts structured job data from raw job listing text
- * Supports text paste, PDF extraction, or OCR output
+ * Uses Claude CLI (subscription auth) first, falls back to SDK if needed
  */
 export async function extractJobListing(
   jobListingText: string
@@ -170,30 +208,44 @@ ${jobListingText}
 
 Return ONLY the JSON object, no other text.`;
 
-  const response = await getClient().messages.create({
-    model: "claude-3-5-sonnet-20241022",
-    max_tokens: 2000,
-    messages: [
-      {
-        role: "user",
-        content: extractionPrompt,
-      },
-    ],
-  });
+  let responseText: string;
 
-  // Extract text from response
-  const textContent = response.content.find((block) => block.type === "text");
-  if (!textContent || textContent.type !== "text") {
-    throw new Error("No text content in Claude response");
+  // Try Claude CLI first (uses subscription auth from `claude login`)
+  try {
+    console.log('[Claude] Trying CLI (subscription mode)...');
+    responseText = await runClaudeCLI(extractionPrompt);
+    console.log('[Claude] ✓ CLI worked! Using subscription authentication');
+  } catch (cliError) {
+    console.log('[Claude] CLI failed:', cliError instanceof Error ? cliError.message : String(cliError));
+    console.log('[Claude] Falling back to SDK (API key mode)...');
+
+    // Fallback to SDK (requires API key)
+    const response = await getClient().messages.create({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 2000,
+      messages: [
+        {
+          role: "user",
+          content: extractionPrompt,
+        },
+      ],
+    });
+
+    // Extract text from response
+    const textContent = response.content.find((block) => block.type === "text");
+    if (!textContent || textContent.type !== "text") {
+      throw new Error("No text content in Claude response");
+    }
+    responseText = textContent.text;
   }
 
   // Parse JSON response
   let extractedData: ExtractedJobData;
   try {
-    extractedData = JSON.parse(textContent.text);
+    extractedData = JSON.parse(responseText);
   } catch (error) {
     throw new Error(
-      `Failed to parse Claude extraction response as JSON: ${textContent.text}. Error: ${error}`
+      `Failed to parse Claude extraction response as JSON: ${responseText}. Error: ${error}`
     );
   }
 
@@ -279,30 +331,43 @@ Return ONLY this JSON object:
 
 No other text, only valid JSON.`;
 
-  const response = await getClient().messages.create({
-    model: "claude-3-5-sonnet-20241022",
-    max_tokens: 3000,
-    messages: [
-      {
-        role: "user",
-        content: guidancePrompt,
-      },
-    ],
-  });
+  let responseText: string;
 
-  // Extract text from response
-  const textContent = response.content.find((block) => block.type === "text");
-  if (!textContent || textContent.type !== "text") {
-    throw new Error("No text content in Claude guidance response");
+  // Try Claude CLI first (uses subscription auth)
+  try {
+    console.log('[Claude] Trying CLI for guidance generation...');
+    responseText = await runClaudeCLI(guidancePrompt);
+    console.log('[Claude] ✓ CLI worked for guidance!');
+  } catch (cliError) {
+    console.log('[Claude] CLI failed for guidance:', cliError instanceof Error ? cliError.message : String(cliError));
+
+    // Fallback to SDK
+    const response = await getClient().messages.create({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 3000,
+      messages: [
+        {
+          role: "user",
+          content: guidancePrompt,
+        },
+      ],
+    });
+
+    // Extract text from response
+    const textContent = response.content.find((block) => block.type === "text");
+    if (!textContent || textContent.type !== "text") {
+      throw new Error("No text content in Claude guidance response");
+    }
+    responseText = textContent.text;
   }
 
   // Parse JSON response
   let guidanceData: GuidanceContent;
   try {
-    guidanceData = JSON.parse(textContent.text);
+    guidanceData = JSON.parse(responseText);
   } catch (error) {
     throw new Error(
-      `Failed to parse Claude guidance response as JSON: ${textContent.text}. Error: ${error}`
+      `Failed to parse Claude guidance response as JSON: ${responseText}. Error: ${error}`
     );
   }
 
