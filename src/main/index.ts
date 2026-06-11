@@ -25,7 +25,7 @@ import {
   getAttachmentsForApplication,
   deleteAttachment,
 } from './database';
-import { extractJobListing, generateGuidance } from './claude';
+import { extractJobListing, generateGuidance, getClient } from './claude';
 import { JobApplication, Workflow, ExtractedJobData } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;

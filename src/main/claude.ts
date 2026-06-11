@@ -109,7 +109,7 @@ function getStoredAuthToken(): string | null {
 }
 
 
-function getClient(): Anthropic {
+export function getClient(): Anthropic {
   if (!client) {
     try {
       // First try to get stored session token
