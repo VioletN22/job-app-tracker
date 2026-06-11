@@ -7,9 +7,19 @@ if (!globalThis.fetch) {
   globalThis.fetch = fetchPonyfill;
 }
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+// Create Anthropic client
+// Uses local Claude subscription via electron session
+let client: Anthropic | null = null;
+
+function getClient(): Anthropic {
+  if (!client) {
+    // Initialize with local credentials or environment variable if set
+    client = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    });
+  }
+  return client;
+}
 
 /**
  * Extracts structured job data from raw job listing text
@@ -42,7 +52,7 @@ ${jobListingText}
 
 Return ONLY the JSON object, no other text.`;
 
-  const response = await client.messages.create({
+  const response = await getClient().messages.create({
     model: "claude-3-5-sonnet-20241022",
     max_tokens: 2000,
     messages: [
@@ -151,7 +161,7 @@ Return ONLY this JSON object:
 
 No other text, only valid JSON.`;
 
-  const response = await client.messages.create({
+  const response = await getClient().messages.create({
     model: "claude-3-5-sonnet-20241022",
     max_tokens: 3000,
     messages: [

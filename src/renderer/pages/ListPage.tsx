@@ -35,7 +35,12 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
   const handleAddApplication = async (jobListing: string) => {
     try {
       setIsProcessing(true);
-      await window.electronAPI.claude.ingestJobListing(jobListing, 'Unknown Company');
+      const result = await window.electronAPI.claude.ingestJobListing(jobListing, 'Unknown Company');
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to add application');
+      }
+
       await refresh(filters);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to add application';
@@ -48,7 +53,12 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
   const handleQuickAdd = async (company: string, jobTitle: string) => {
     try {
       setIsProcessing(true);
-      await window.electronAPI.quickAddApplication(company, jobTitle);
+      const result = await window.electronAPI.quickAddApplication(company, jobTitle);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to add application');
+      }
+
       await refresh(filters);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to add application';
