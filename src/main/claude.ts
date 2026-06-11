@@ -32,37 +32,49 @@ function getStoredAuthToken(): string | null {
       path.join(homeDir, 'AppData', 'Local', 'Claude', 'auth.json'),
     ];
 
-    for (const tokenPath of possiblePaths) {
-      if (fs.existsSync(tokenPath)) {
-        const content = fs.readFileSync(tokenPath, 'utf-8').trim();
+    console.log('[Claude Auth] Checking token locations:');
+    console.log('[Claude Auth] Home directory:', homeDir);
 
-        // If it's JSON, extract the token
-        if (content.startsWith('{')) {
-          try {
-            const data = JSON.parse(content);
-            const token = data.token || data.apiKey || data.authToken;
-            if (token) {
-              console.log('[Claude Auth] Found token at:', tokenPath);
-              return token;
+    for (const tokenPath of possiblePaths) {
+      console.log('[Claude Auth] Checking:', tokenPath, 'exists:', fs.existsSync(tokenPath));
+
+      if (fs.existsSync(tokenPath)) {
+        try {
+          const content = fs.readFileSync(tokenPath, 'utf-8').trim();
+          console.log('[Claude Auth] Found file at:', tokenPath);
+          console.log('[Claude Auth] File size:', content.length, 'bytes');
+
+          // If it's JSON, extract the token
+          if (content.startsWith('{')) {
+            try {
+              const data = JSON.parse(content);
+              const token = data.token || data.apiKey || data.authToken;
+              if (token) {
+                console.log('[Claude Auth] ✓ Found token in JSON at:', tokenPath);
+                return token;
+              }
+            } catch (e) {
+              console.log('[Claude Auth] JSON parse error:', e);
+              // Not valid JSON, try as plain token
+              if (content) {
+                console.log('[Claude Auth] ✓ Using as plain text token from:', tokenPath);
+                return content;
+              }
             }
-          } catch (e) {
-            // Not valid JSON, try as plain token
-            if (content) {
-              console.log('[Claude Auth] Found token at:', tokenPath);
-              return content;
-            }
+          } else if (content) {
+            // Plain text token
+            console.log('[Claude Auth] ✓ Using plain text token from:', tokenPath);
+            return content;
           }
-        } else if (content) {
-          // Plain text token
-          console.log('[Claude Auth] Found token at:', tokenPath);
-          return content;
+        } catch (err) {
+          console.log('[Claude Auth] Error reading file:', err);
         }
       }
     }
 
-    console.log('[Claude Auth] No token found in any location');
+    console.log('[Claude Auth] ✗ No token found in any location');
   } catch (error) {
-    console.error('Error reading auth token:', error);
+    console.error('[Claude Auth] Error:', error);
   }
   return null;
 }

@@ -42,10 +42,12 @@ export const SettingsPage: React.FC = () => {
       const status = await window.electronAPI.claude.checkAuth();
       setClaudeAuth(status);
 
+      console.log('Claude auth check result:', status);
+
       if (status.authenticated) {
         setAuthMessage('✓ Claude authenticated! Extract with AI is ready to use.');
       } else {
-        setAuthMessage('Claude not authenticated yet. Run "claude login" in your terminal.');
+        setAuthMessage('Claude not detected. Check the console or try the manual path option below.');
       }
     } catch (err) {
       console.error('Error checking Claude auth:', err);
