@@ -1,9 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FilterBar } from '../components/FilterBar';
 import { ApplicationCard } from '../components/ApplicationCard';
 import { AddApplicationModal } from '../modals/AddApplicationModal';
 import { Dialog } from '../components/Dialog';
 import { useApplications } from '../hooks/useApplications';
+import { Workflow } from '../../shared/types';
+
+// Outcome stages every application can move to, on top of its workflow path.
+const OUTCOME_STAGES = ['rejected', 'withdrawn'];
 
 interface Filters {
   company?: string;
@@ -15,11 +19,39 @@ interface ListPageProps {
 }
 
 export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
-  const { applications, loading, refresh } = useApplications();
+  const { applications, loading, refresh, patch } = useApplications();
   const [showAddModal, setShowAddModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [filters, setFilters] = useState<Filters>({});
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+
+  useEffect(() => {
+    window.electronAPI.db.getAllWorkflows().then(setWorkflows).catch(() => {});
+  }, []);
+
+  // The stages a given application can be set to: its workflow path + outcomes,
+  // and always include its current stage so the select can display it.
+  const stagesForApp = (workflowId: string | null, currentStage: string): string[] => {
+    const wf = workflows.find((w) => w.id === workflowId);
+    const base = wf?.stages ?? ['applied', 'oa', 'phone_screen', 'interview', 'offer'];
+    return Array.from(new Set([...base, ...OUTCOME_STAGES, currentStage]));
+  };
+
+  const handleChangeStage = async (applicationId: string, stage: string) => {
+    // Optimistic in-place update — keeps scroll position (no full reload).
+    patch(applicationId, { current_stage: stage });
+    try {
+      await window.electronAPI.db.createStageHistory(applicationId, stage);
+      await window.electronAPI.db.updateApplication(applicationId, { current_stage: stage });
+    } catch (err) {
+      await refresh(filters); // revert to server truth on failure
+      setErrorDialog({
+        title: 'Error Updating Status',
+        message: err instanceof Error ? err.message : 'Failed to update status',
+      });
+    }
+  };
 
   const handleFilterChange = async (newFilters: Filters) => {
     setFilters(newFilters);
@@ -34,10 +66,10 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
     setShowAddModal(false);
   };
 
-  const handleAddApplication = async (jobListing: string) => {
+  const handleAddApplication = async (jobListing: string, jobSource: string | null) => {
     try {
       setIsProcessing(true);
-      const result = await window.electronAPI.claude.ingestJobListing(jobListing, 'Unknown Company');
+      const result = await window.electronAPI.claude.ingestJobListing(jobListing, 'Unknown Company', jobSource);
 
       if (!result.success) {
         throw new Error(result.error || 'Failed to add application');
@@ -52,10 +84,10 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
     }
   };
 
-  const handleQuickAdd = async (company: string, jobTitle: string) => {
+  const handleQuickAdd = async (company: string, jobTitle: string, jobSource: string | null) => {
     try {
       setIsProcessing(true);
-      const result = await window.electronAPI.quickAddApplication(company, jobTitle);
+      const result = await window.electronAPI.quickAddApplication(company, jobTitle, jobSource);
 
       if (!result.success) {
         throw new Error(result.error || 'Failed to add application');
@@ -126,6 +158,8 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
               application={app}
               onClick={onSelectApplication}
               onDelete={handleDeleteApplication}
+              stages={stagesForApp(app.workflow_id, app.current_stage)}
+              onChangeStage={handleChangeStage}
             />
           ))}
         </div>

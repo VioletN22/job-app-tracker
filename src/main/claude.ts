@@ -1,4 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
+// Type-only import — erased at compile time. The SDK is required lazily in
+// getClient() so it stays off the app's cold-start path. The CLI path
+// (runClaudeCLI) is what's normally used and needs no SDK at all.
+import type Anthropic from "@anthropic-ai/sdk";
 import { ExtractedJobData, GuidanceContent } from "../shared/types";
 import * as fs from 'fs';
 import * as path from 'path';
@@ -32,7 +35,9 @@ export function runClaudeCLI(prompt: string, timeoutMs = 60000): Promise<string>
     `cd /tmp && printf %s '${b64}' | base64 --decode | ` +
     `env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN ` +
     `-u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION ` +
-    `"$CLAUDE" -p --output-format text`;
+    // --model sonnet: ~10x faster than the default (Opus) so extractions finish in
+    // a few seconds instead of intermittently hitting the timeout. Same as Inkd.
+    `"$CLAUDE" -p --model sonnet --output-format text`;
 
   return new Promise((resolve, reject) => {
     const proc = spawn("/bin/sh", ["-c", cmd]);
@@ -152,19 +157,24 @@ function getStoredAuthToken(): string | null {
 export function getClient(): Anthropic {
   if (!client) {
     try {
+      // Lazy require — the SDK only loads the first time the (fallback) API
+      // client is actually needed, never during startup.
+      const mod = require("@anthropic-ai/sdk");
+      const AnthropicSDK = (mod.default || mod) as typeof import("@anthropic-ai/sdk").default;
+
       // First try to get stored session token
       const sessionToken = getStoredAuthToken();
 
       if (sessionToken) {
         console.log('[Claude Auth] Using stored session token');
-        client = new Anthropic({
+        client = new AnthropicSDK({
           apiKey: sessionToken,
         });
       } else {
         // No token file found - try SDK's default auth chain
         // This includes environment variables and other default methods
         console.log('[Claude Auth] No token file found, trying SDK default auth...');
-        client = new Anthropic();
+        client = new AnthropicSDK();
       }
     } catch (error) {
       console.error('[Claude Auth] Error initializing Anthropic client:', error);
@@ -176,7 +186,7 @@ export function getClient(): Anthropic {
       );
     }
   }
-  return client;
+  return client!;
 }
 
 /**
@@ -213,6 +223,7 @@ CRITICAL RULES:
 - job_description must be a CLEAN, CONCISE rewrite (max 150 words): what the company does + what the role is. Strip ALL job-board boilerplate, promo text, premium upsells, follower counts, etc.
 - key_responsibilities, required_skills, nice_to_have_skills: short bullet-style lines separated by newlines, max 6 each.
 - Salaries: convert to numbers (e.g. "$120k" -> 120000). Use null if not stated.
+- job_source: the job site/channel this listing came from, IF it's obvious from the text or URL. Choose EXACTLY ONE from: "Seek", "LinkedIn", "Indeed", "Prosple", "GradConnection", "Jora", "Glassdoor", "CareerOne", "Workforce Australia", "Hatch", "Company website", "Referral", "Recruiter / Agency", "Other". Use null if you can't tell. Do NOT guess "Company website" just because a company is named.
 
 Return ONLY a valid JSON object (no markdown fences, no commentary) with exactly these fields:
 {
@@ -220,6 +231,7 @@ Return ONLY a valid JSON object (no markdown fences, no commentary) with exactly
   "job_title": string,
   "location": string,
   "job_url": string (empty string if not found),
+  "job_source": string | null,
   "salary_min": number | null,
   "salary_max": number | null,
   "equity": string | null,
@@ -280,6 +292,7 @@ ${jobListingText}`;
   // Fill safe defaults for optional-ish fields so validation doesn't reject good extractions
   extractedData.job_url = extractedData.job_url || '';
   extractedData.nice_to_have_skills = extractedData.nice_to_have_skills || '';
+  extractedData.job_source = extractedData.job_source || null;
 
   // Validate truly required fields only (others get safe defaults)
   const requiredFields: (keyof ExtractedJobData)[] = [

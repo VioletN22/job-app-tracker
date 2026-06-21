@@ -1,7 +1,7 @@
 {
-  "name": "job-app-tracker",
+  "name": "aplyd",
   "version": "1.0.0",
-  "description": "",
+  "description": "Job application tracker",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
@@ -10,8 +10,9 @@
     "build": "npm run build:vite && npm run build:electron",
     "build:vite": "vite build",
     "build:electron": "tsc",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "pack": "electron-builder --config electron-builder.config.js --dir",
+    "dist": "electron-builder --config electron-builder.config.js",
+    "install-app": "bash scripts/install-app.sh"
   },
   "keywords": [],
   "author": "",
@@ -23,6 +24,7 @@
     "form-data": "^4.0.5",
     "lucide-react": "^1.17.0",
     "node-fetch": "^2.7.0",
+    "pdf-parse": "^1.1.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "uuid": "^14.0.0"

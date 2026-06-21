@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type Page = 'dashboard' | 'list' | 'detail' | 'settings';
+export type Page = 'dashboard' | 'list' | 'flow' | 'autopilot' | 'detail' | 'settings';
 
 interface NavigationProps {
   currentPage: Page;
@@ -11,6 +11,8 @@ export const Navigation: React.FC<NavigationProps> = ({ currentPage, onNavigate 
   const navItems: { label: string; page: Page }[] = [
     { label: 'Dashboard', page: 'dashboard' },
     { label: 'Applications', page: 'list' },
+    { label: 'Flow', page: 'flow' },
+    { label: 'Autopilot', page: 'autopilot' },
     { label: 'Settings', page: 'settings' },
   ];
 

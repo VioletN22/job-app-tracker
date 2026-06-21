@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, MapPin, DollarSign, Calendar, ChevronDown, ChevronRight } from 'lucide-react';
-import { JobApplication, Workflow, StageHistory } from '../../shared/types';
+import { JobApplication, Workflow, StageHistory, JOB_SOURCES } from '../../shared/types';
 import { ChatPanel } from '../components/ChatPanel';
 import { Dropdown } from '../components/Dropdown';
+
+// "Not specified" first so the source is clearable, then the shared list.
+const SOURCE_OPTIONS = [
+  { value: '', label: 'Not specified' },
+  ...JOB_SOURCES.map((s) => ({ value: s, label: s })),
+];
 
 interface DetailPageProps {
   applicationId: string | null;
@@ -89,6 +95,19 @@ export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack })
     }
   };
 
+  const handleSourceChange = async (newSource: string) => {
+    if (!applicationId || !application) return;
+    const value = newSource || null;
+    if (value === application.job_source) return;
+    // Optimistic — the dropdown reflects the choice immediately.
+    setApplication({ ...application, job_source: value });
+    try {
+      await window.electronAPI.db.updateApplication(applicationId, { job_source: value });
+    } catch {
+      /* non-fatal — revert handled on next load */
+    }
+  };
+
   const formatDate = (d: string | null): string => {
     if (!d) return '';
     try {
@@ -124,9 +143,11 @@ export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack })
     );
   }
 
-  const nextStages = workflow
-    ? workflow.stages.filter((s) => s !== application.current_stage)
-    : [];
+  const nextStages = (
+    workflow
+      ? [...workflow.stages, 'rejected', 'withdrawn']
+      : ['rejected', 'withdrawn']
+  ).filter((s, i, a) => s !== application.current_stage && a.indexOf(s) === i);
   const salary = formatSalary(application.salary_min, application.salary_max);
   const bullets = (text: string) =>
     text
@@ -161,21 +182,39 @@ export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack })
 
       {/* Header */}
       <div style={{ borderBottom: '1px solid var(--ink)', paddingBottom: '20px', marginBottom: '24px' }}>
-        <span
-          style={{
-            display: 'inline-block',
-            padding: '4px 8px',
-            backgroundColor: 'var(--accent)',
-            color: '#fff',
-            fontSize: '10px',
-            fontWeight: 600,
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            marginBottom: '12px',
-          }}
-        >
-          {application.current_stage}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+          <span
+            style={{
+              display: 'inline-block',
+              padding: '4px 8px',
+              backgroundColor: 'var(--accent)',
+              color: '#fff',
+              fontSize: '10px',
+              fontWeight: 600,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+            }}
+          >
+            {application.current_stage}
+          </span>
+          {application.job_source && (
+            <span
+              title="Job source"
+              style={{
+                display: 'inline-block',
+                padding: '4px 8px',
+                backgroundColor: 'var(--panel)',
+                color: 'var(--muted)',
+                fontSize: '10px',
+                fontWeight: 600,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+              }}
+            >
+              {application.job_source}
+            </span>
+          )}
+        </div>
         <h1 style={{ fontSize: '28px', fontWeight: 700, color: 'var(--ink)', marginBottom: '4px' }}>
           {application.job_title}
         </h1>
@@ -350,6 +389,17 @@ export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack })
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Source */}
+          <div>
+            <p style={sectionLabel}>Source</p>
+            <Dropdown
+              value={application.job_source || ''}
+              options={SOURCE_OPTIONS}
+              onChange={handleSourceChange}
+              placeholder="Where did you find it?"
+            />
           </div>
 
           {/* Notes */}

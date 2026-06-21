@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { JobApplication, Workflow } from '../shared/types';
+import { JobApplication, Workflow, AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter } from '../shared/types';
 
 // Define the API object
 const electronAPI = {
@@ -33,9 +33,21 @@ const electronAPI = {
 
   // Claude operations
   claude: {
-    ingestJobListing: (jobListingText: string, company: string) =>
-      ipcRenderer.invoke('claude:ingestJobListing', jobListingText, company),
+    ingestJobListing: (jobListingText: string, company: string, jobSource?: string | null) =>
+      ipcRenderer.invoke('claude:ingestJobListing', jobListingText, company, jobSource ?? null),
     checkAuth: () => ipcRenderer.invoke('claude:checkAuth'),
+  },
+
+  // Application flow (Sankey) data
+  flow: {
+    getData: () => ipcRenderer.invoke('flow:getData'),
+  },
+
+  // purpl hq license
+  license: {
+    status: () => ipcRenderer.invoke('license:status'),
+    activate: (key: string) => ipcRenderer.invoke('license:activate', key),
+    deactivate: () => ipcRenderer.invoke('license:deactivate'),
   },
 
   // Per-application chat assistant
@@ -45,9 +57,38 @@ const electronAPI = {
       ipcRenderer.invoke('chat:send', applicationId, message),
   },
 
+  // Autopilot: answer bank / document locker / voice profile
+  autopilot: {
+    getAnswerBank: (): Promise<AnswerBankEntry[]> => ipcRenderer.invoke('autopilot:getAnswerBank'),
+    upsertAnswer: (entry: Partial<AnswerBankEntry> & { label: string; value: string }): Promise<AnswerBankEntry> =>
+      ipcRenderer.invoke('autopilot:upsertAnswer', entry),
+    deleteAnswer: (id: string) => ipcRenderer.invoke('autopilot:deleteAnswer', id),
+    getDocuments: (): Promise<LockerDocument[]> => ipcRenderer.invoke('autopilot:getDocuments'),
+    pickDocument: (): Promise<string | null> => ipcRenderer.invoke('autopilot:pickDocument'),
+    addDocument: (label: string, filePath: string, tags: string[], isDefault: boolean): Promise<LockerDocument> =>
+      ipcRenderer.invoke('autopilot:addDocument', label, filePath, tags, isDefault),
+    deleteDocument: (id: string) => ipcRenderer.invoke('autopilot:deleteDocument', id),
+    getVoiceNotes: (): Promise<VoiceNote[]> => ipcRenderer.invoke('autopilot:getVoiceNotes'),
+    addVoiceNote: (kind: VoiceNoteKind, note: string): Promise<VoiceNote> =>
+      ipcRenderer.invoke('autopilot:addVoiceNote', kind, note),
+    deleteVoiceNote: (id: string) => ipcRenderer.invoke('autopilot:deleteVoiceNote', id),
+    getPortfolioLinks: (): Promise<PortfolioLink[]> => ipcRenderer.invoke('autopilot:getPortfolioLinks'),
+    addPortfolioLink: (label: string, url: string): Promise<PortfolioLink> =>
+      ipcRenderer.invoke('autopilot:addPortfolioLink', label, url),
+    deletePortfolioLink: (id: string) => ipcRenderer.invoke('autopilot:deletePortfolioLink', id),
+    getCoverLetters: (): Promise<CoverLetter[]> => ipcRenderer.invoke('autopilot:getCoverLetters'),
+    saveCoverLetter: (input: Partial<CoverLetter> & { company: string; role: string; body: string }): Promise<CoverLetter> =>
+      ipcRenderer.invoke('autopilot:saveCoverLetter', input),
+    deleteCoverLetter: (id: string) => ipcRenderer.invoke('autopilot:deleteCoverLetter', id),
+    generateCoverLetter: (opts: { company: string; role: string; jobText?: string }): Promise<{ body: string }> =>
+      ipcRenderer.invoke('autopilot:generateCoverLetter', opts),
+    refineCoverLetter: (opts: { company: string; role: string; body: string; feedback: string; remember?: boolean }): Promise<{ body: string }> =>
+      ipcRenderer.invoke('autopilot:refineCoverLetter', opts),
+  },
+
   // Quick add operation
-  quickAddApplication: (company: string, jobTitle: string) =>
-    ipcRenderer.invoke('quickAddApplication', company, jobTitle),
+  quickAddApplication: (company: string, jobTitle: string, jobSource?: string | null) =>
+    ipcRenderer.invoke('quickAddApplication', company, jobTitle, jobSource ?? null),
 
   // Attachment operations
   attachment: {

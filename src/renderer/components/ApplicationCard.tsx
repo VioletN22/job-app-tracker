@@ -2,15 +2,32 @@ import React, { useState } from 'react';
 import { MapPin, DollarSign, Calendar, Trash2 } from 'lucide-react';
 import { JobApplication } from '../../shared/types';
 import { Dialog } from './Dialog';
+import { StatusBadge } from './StatusBadge';
 
 interface ApplicationCardProps {
   application: JobApplication;
   onClick: (id: string) => void;
   onDelete?: (id: string) => void;
+  stages?: string[]; // selectable stages for this app (incl. rejected/withdrawn)
+  onChangeStage?: (id: string, stage: string) => void;
 }
 
-export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, onClick, onDelete }) => {
+const STAGE_LABEL: Record<string, string> = {
+  applied: 'Applied', oa: 'OA', phone_screen: 'Phone screen',
+  interview: 'Interview', offer: 'Offer', rejected: 'Rejected', withdrawn: 'Withdrawn',
+};
+const stageLabel = (s: string) => STAGE_LABEL[s] ?? s.replace(/_/g, ' ');
+// Outcome stages get a distinct tint so a dead application reads at a glance.
+const stageColors = (s: string): { bg: string; fg: string } => {
+  if (s === 'rejected') return { bg: '#fee2e2', fg: '#b91c1c' };
+  if (s === 'withdrawn') return { bg: '#f3f4f6', fg: '#6b7280' };
+  if (s === 'offer') return { bg: '#dcfce7', fg: '#15803d' };
+  return { bg: 'var(--panel)', fg: 'var(--muted)' };
+};
+
+export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, onClick, onDelete, stages, onChangeStage }) => {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const sc = stageColors(application.current_stage);
 
   const formatDate = (dateString: string | null): string => {
     if (!dateString) return '';
@@ -82,21 +99,39 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({ application, o
         </button>
       )}
 
-      {/* Stage badge */}
-      <div
-        style={{
-          display: 'inline-block',
-          padding: '4px 8px',
-          backgroundColor: 'var(--panel)',
-          color: 'var(--muted)',
-          fontSize: '11px',
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          fontWeight: 600,
-          marginBottom: '8px',
-        }}
-      >
-        {application.current_stage}
+      {/* Stage selector + source, side by side as matching badges */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
+        {onChangeStage && stages && stages.length > 0 ? (
+          <StatusBadge
+            value={application.current_stage}
+            options={stages}
+            onChange={(s) => onChangeStage(application.id, s)}
+          />
+        ) : (
+          <div
+            style={{
+              display: 'inline-block', padding: '4px 8px', backgroundColor: sc.bg, color: sc.fg,
+              fontSize: '11px', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600, marginBottom: '8px',
+            }}
+          >
+            {stageLabel(application.current_stage)}
+          </div>
+        )}
+
+        {/* Source badge — same pill design, neutral grey to read as metadata not a stage */}
+        {application.job_source && (
+          <span
+            title="Job source"
+            style={{
+              display: 'inline-block', padding: '4px 8px',
+              backgroundColor: 'var(--panel)', color: 'var(--muted)',
+              fontSize: '11px', letterSpacing: '0.08em', textTransform: 'uppercase',
+              fontWeight: 600, marginBottom: '8px',
+            }}
+          >
+            {application.job_source}
+          </span>
+        )}
       </div>
 
       {/* Title */}

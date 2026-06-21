@@ -1,8 +1,25 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
+import fs from 'fs';
 
-// Simple dev check without ESM import
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// File-based logging — survives even when there's no attached console
+const LOG_PATH = '/tmp/aplyd-main.log';
+function log(...args: unknown[]) {
+  const line = new Date().toISOString() + ' ' + args.map(String).join(' ') + '\n';
+  try { fs.appendFileSync(LOG_PATH, line); } catch { /* ignore */ }
+  console.log(...args);
+}
+process.on('unhandledRejection', (err) => log('[unhandledRejection]', err));
+process.on('uncaughtException', (err) => log('[uncaughtException]', err));
+
+// Single-instance lock — second launch focuses the existing window
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
 import {
   initializeDatabase,
   closeDatabase,
@@ -26,66 +43,265 @@ import {
   deleteAttachment,
   addChatMessage,
   getChatMessages,
+  getAnswerBank,
+  upsertAnswer,
+  deleteAnswer,
+  getDocuments,
+  addDocument,
+  deleteDocument,
+  getVoiceNotes,
+  addVoiceNote,
+  deleteVoiceNote,
+  getPortfolioLinks,
+  addPortfolioLink,
+  deletePortfolioLink,
+  getCoverLetters,
+  saveCoverLetter,
+  deleteCoverLetter,
 } from './database';
+import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
+import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot } from './autopilot-prompts';
 import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
+import { getFlowData } from './flow';
+import { getLicenseStatus, activateLicense, deactivateLicense } from './license';
 import { JobApplication, Workflow, ExtractedJobData } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
+let isStarting = false;
 
-/**
- * Create the main application window
- */
+// Inline splash as base64 data URL — shows instantly, no file I/O
+const SPLASH_HTML = Buffer.from(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#111010;display:flex;flex-direction:column;align-items:center;
+     justify-content:center;height:100vh;font-family:-apple-system,sans-serif;
+     color:#f0ede8;-webkit-app-region:drag;user-select:none}
+.logo{font-size:52px;font-weight:300;letter-spacing:-.03em}
+.logo span{color:#f23a17}
+.bar{margin-top:28px;width:120px;height:3px;background:#222;border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;width:40%;background:#f23a17;border-radius:2px;
+       animation:s 1.1s ease-in-out infinite}
+@keyframes s{0%{margin-left:-42%}100%{margin-left:102%}}
+.sub{margin-top:14px;font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#555}
+</style></head><body>
+<div class="logo">aply<span>d</span></div>
+<div class="bar"><i></i></div>
+<div class="sub">loading…</div>
+</body></html>`).toString('base64');
+const SPLASH_URL = `data:text/html;base64,${SPLASH_HTML}`;
+
+const APP_URL = isDev
+  ? 'http://localhost:5173'
+  : `file://${path.join(__dirname, '../renderer/index.html')}`;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    minWidth: 960,
+    minHeight: 640,
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#111010',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
+    title: 'aplyd',
   });
 
-  const startUrl = isDev
-    ? 'http://localhost:5173'
-    : `file://${path.join(__dirname, '../renderer/index.html')}`;
+  mainWindow.on('closed', () => { mainWindow = null; });
 
-  mainWindow.loadURL(startUrl);
-
-  if (isDev) {
-    mainWindow.webContents.openDevTools();
-  }
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
   });
+
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    log('[did-fail-load]', code, desc, url);
+  });
+
+  // Show the splash the moment it renders, then swap in the real app once it
+  // has finished loading. We track which URL just loaded so the splash handler
+  // doesn't re-trigger when the app URL finishes.
+  let appLoadRequested = false;
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (!mainWindow) return;
+    const current = mainWindow.webContents.getURL();
+    log('[did-finish-load]', current.slice(0, 40));
+
+    if (!appLoadRequested) {
+      // Splash just rendered — reveal the window IMMEDIATELY, before any
+      // heavy work. The user sees the loading screen right away.
+      mainWindow.setAlwaysOnTop(true, 'floating');
+      mainWindow.show();
+      mainWindow.focus();
+      app.focus({ steal: true });
+      appLoadRequested = true;
+      log('[show] window visible, uptime=' + process.uptime().toFixed(3));
+
+      const swap = () => {
+        if (!mainWindow) return;
+        // Initialize the DB now — this triggers the native better-sqlite3
+        // load, but the window is already on screen so the user never waits
+        // on a blank dock icon. Done before loading the app so the first
+        // renderer IPC call finds the DB ready.
+        try {
+          initializeDatabase();
+          log('[swap] db initialized, uptime=' + process.uptime().toFixed(3));
+        } catch (err) {
+          log('[swap] DB init failed:', err);
+        }
+        log('[swap] loading app url', APP_URL.slice(0, 60));
+        mainWindow.setAlwaysOnTop(false);
+        mainWindow.loadURL(APP_URL);
+        isStarting = false;
+      };
+      // Defer one tick so the splash actually paints before we block the
+      // main thread loading the native module. In dev, Vite needs a beat.
+      if (isDev) setTimeout(swap, 800);
+      else setTimeout(swap, 16);
+    } else if (isDev) {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
+
+  log('[createWindow] loading splash');
+  mainWindow.loadURL(SPLASH_URL);
 }
 
-/**
- * Electron lifecycle: when app is ready
- */
-app.on('ready', () => {
-  initializeDatabase();
-  createWindow();
-});
-
-/**
- * Electron lifecycle: when all windows are closed
- */
-app.on('window-all-closed', () => {
-  closeDatabase();
-  if (process.platform !== 'darwin') {
-    app.quit();
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
   }
 });
 
-/**
- * Electron lifecycle: when app is activated (macOS)
- */
+app.whenReady().then(() => {
+  log('[whenReady] uptime=' + process.uptime().toFixed(3) + ' isPackaged=' + app.isPackaged);
+  isStarting = true;
+  // Create the window FIRST — DB init is deferred until after the splash is
+  // visible (see the show handler above), keeping cold start minimal.
+  createWindow();
+
+  // Autopilot: start the local bridge the browser extension talks to.
+  try {
+    initializeDatabase(); // idempotent — ensure the DB is ready for extension calls
+    startAutopilotServer({
+      onApply: (company, jobTitle, jobUrl) => {
+        // dedup: don't log the same application twice (re-runs, multi-step pages)
+        if (jobUrl) {
+          const existing = getAllApplications().find((a) => a.job_url && a.job_url.split('?')[0] === jobUrl.split('?')[0]);
+          if (existing) return;
+        }
+        let workflow = getDefaultWorkflowForCompany(company);
+        if (!workflow) {
+          workflow = createWorkflow(company, `${company} Default Workflow`, ['applied', 'phone_screen', 'interview', 'offer'], true);
+        }
+        const data: ExtractedJobData = {
+          company, job_title: jobTitle, location: '', job_url: jobUrl, job_source: 'LinkedIn',
+          salary_min: null, salary_max: null, equity: null, benefits: null,
+          job_description: 'Applied via Autopilot — add details later.',
+          key_responsibilities: '', required_skills: '', nice_to_have_skills: '',
+          team_info: null, hiring_timeline: null, application_deadline: null,
+        };
+        const application = createApplication(data, workflow.id);
+        createStageHistory(application.id, 'applied', 'Applied via Autopilot extension');
+      },
+      // Save a finished cover letter to disk as a PDF (default ~/Documents/work-stuff)
+      // and into the in-app vault.
+      saveCover: async ({ company, role, body }) => {
+        const dir = path.join(app.getPath('documents'), 'work-stuff');
+        fs.mkdirSync(dir, { recursive: true });
+        const safe = (s: string) => (s || '').replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Untitled';
+        const file = path.join(dir, `Cover Letter - ${safe(company)} - ${safe(role)}.pdf`);
+        const paras = body.split(/\n{2,}/).map((p) => `<p>${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br/>')}</p>`).join('\n');
+        const html =
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><style>` +
+          `body{font-family:Georgia,'Times New Roman',serif;font-size:12pt;line-height:1.55;color:#111;margin:0;padding:0}` +
+          `.doc{max-width:660px;margin:0 auto}p{margin:0 0 14px}` +
+          `</style></head><body><div class="doc">${paras}</div></body></html>`;
+        const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+        try {
+          await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+          const pdf = await win.webContents.printToPDF({ printBackground: true, marginsType: 0 } as any);
+          fs.writeFileSync(file, pdf);
+        } finally {
+          win.destroy();
+        }
+        try { saveCoverLetter({ company, role, body, isFinal: true, jobUrl: null }); } catch { /* vault best-effort */ }
+        return { path: file };
+      },
+    });
+    log('[autopilot] bridge listening on 127.0.0.1:' + AUTOPILOT_PORT);
+  } catch (e) {
+    log('[autopilot] failed to start bridge', e);
+  }
+});
+
+app.on('window-all-closed', () => {
+  closeDatabase();
+  if (process.platform !== 'darwin') app.quit();
+});
+
 app.on('activate', () => {
   if (mainWindow === null) {
-    initializeDatabase();
-    createWindow();
+    if (!isStarting) {
+      isStarting = true;
+      createWindow();
+    }
+  } else if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+    mainWindow.focus();
+  } else if (!mainWindow.isVisible()) {
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    mainWindow.focus();
+  }
+});
+
+// License (purpl hq) IPC Handlers
+
+// This app's id for entitlement checks. inkd uses 'inkd' in its own copy.
+const APP_ID = 'aplyd';
+
+ipcMain.handle('license:status', async () => {
+  try {
+    return getLicenseStatus(APP_ID);
+  } catch (error) {
+    return { licensed: false, entitlements: [] };
+  }
+});
+
+ipcMain.handle('license:activate', async (_event, key: string) => {
+  try {
+    return activateLicense(key);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('license:deactivate', async () => {
+  try {
+    deactivateLicense();
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+});
+
+// Flow (Sankey) IPC Handler
+
+/**
+ * Get the aggregated application flow (nodes + links + summary) for the
+ * Sankey view. Computed fresh from stage_history on each call.
+ */
+ipcMain.handle('flow:getData', async () => {
+  try {
+    return getFlowData();
+  } catch (error) {
+    throw new Error(`Failed to compute flow data: ${error}`);
   }
 });
 
@@ -261,6 +477,50 @@ ipcMain.handle('file:selectFile', async (_event) => {
   }
 });
 
+// ── Autopilot IPC Handlers (answer bank / document locker / voice profile) ───
+ipcMain.handle('autopilot:getAnswerBank', async () => getAnswerBank());
+ipcMain.handle('autopilot:upsertAnswer', async (_e, entry) => upsertAnswer(entry));
+ipcMain.handle('autopilot:deleteAnswer', async (_e, id: string) => { deleteAnswer(id); return { ok: true }; });
+ipcMain.handle('autopilot:getDocuments', async () => getDocuments());
+ipcMain.handle('autopilot:pickDocument', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openFile'],
+    filters: [
+      { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'txt', 'md'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0]; // path only — never read PDF bytes as utf-8
+});
+ipcMain.handle('autopilot:addDocument', async (_e, label: string, filePath: string, tags: string[], isDefault: boolean) =>
+  addDocument(label, filePath, tags, isDefault));
+ipcMain.handle('autopilot:deleteDocument', async (_e, id: string) => { deleteDocument(id); return { ok: true }; });
+ipcMain.handle('autopilot:getVoiceNotes', async () => getVoiceNotes());
+ipcMain.handle('autopilot:addVoiceNote', async (_e, kind: string, note: string) => addVoiceNote(kind as any, note));
+ipcMain.handle('autopilot:deleteVoiceNote', async (_e, id: string) => { deleteVoiceNote(id); return { ok: true }; });
+
+// Portfolio links (a live website Claude can reference / fetch)
+ipcMain.handle('autopilot:getPortfolioLinks', async () => getPortfolioLinks());
+ipcMain.handle('autopilot:addPortfolioLink', async (_e, label: string, url: string) => addPortfolioLink(label, url));
+ipcMain.handle('autopilot:deletePortfolioLink', async (_e, id: string) => { deletePortfolioLink(id); return { ok: true }; });
+
+// Cover-letter vault + studio
+ipcMain.handle('autopilot:getCoverLetters', async () => getCoverLetters());
+ipcMain.handle('autopilot:saveCoverLetter', async (_e, input) => saveCoverLetter(input));
+ipcMain.handle('autopilot:deleteCoverLetter', async (_e, id: string) => { deleteCoverLetter(id); return { ok: true }; });
+ipcMain.handle('autopilot:generateCoverLetter', async (_e, opts: { company: string; role: string; jobText?: string }) => {
+  const portfolioText = await portfolioSnapshot().catch(() => '');
+  const body = await runClaudeCLI(coverLetterPrompt({ ...opts, portfolioText }), 90000);
+  return { body: body.trim() };
+});
+ipcMain.handle('autopilot:refineCoverLetter', async (_e, opts: { company: string; role: string; body: string; feedback: string; remember?: boolean }) => {
+  // Remember the feedback as a learned style note so future letters improve.
+  if (opts.remember && opts.feedback.trim()) addVoiceNote('style', opts.feedback.trim());
+  const body = await runClaudeCLI(refineCoverLetterPrompt(opts), 90000);
+  return { body: body.trim() };
+});
+
 // Attachment Operations IPC Handlers
 
 /**
@@ -340,7 +600,7 @@ ipcMain.handle('attachment:delete', async (_event, attachmentId: string) => {
 /**
  * Orchestrate the entire job listing ingestion workflow
  */
-ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string, company: string) => {
+ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string, company: string, jobSource: string | null = null) => {
   console.log('[Extract with AI] Starting job listing ingestion');
   try {
     // Step 1: Extract job listing data
@@ -375,7 +635,14 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
         team_info: null,
         hiring_timeline: null,
         application_deadline: null,
+        job_source: null,
       };
+    }
+
+    // A source the user explicitly picked in the form always wins over whatever
+    // the AI inferred (or didn't).
+    if (jobSource) {
+      extractedData.job_source = jobSource;
     }
 
     // Step 2: Get or create default workflow for company
@@ -384,7 +651,7 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
       workflow = createWorkflow(
         extractedData.company,
         `${extractedData.company} Default Workflow`,
-        ['started', 'applied', 'phone_screen', 'interview', 'offer'],
+        ['applied', 'phone_screen', 'interview', 'offer'],
         true
       );
     }
@@ -392,10 +659,9 @@ ipcMain.handle('claude:ingestJobListing', async (_event, jobListingText: string,
     // Step 3: Create application with extracted data
     const application = createApplication(extractedData, workflow.id);
 
-    // Step 4: Initial stage history entry (start with 'started' status).
-    // No upfront guidance generation - the per-application chat assistant
-    // covers that on demand, which keeps ingest fast.
-    createStageHistory(application.id, 'started', 'Application added');
+    // Step 4: Initial stage history entry. Adding a job means you've applied,
+    // so 'applied' is the entry stage (no separate 'started' bucket).
+    createStageHistory(application.id, 'applied', 'Application added');
 
     console.log('[Extract with AI] Success! Created application:', application.id);
     return {
@@ -503,12 +769,12 @@ ipcMain.handle('chat:send', async (_event, applicationId: string, message: strin
 /**
  * Quick add an application with just company and job title
  */
-ipcMain.handle('quickAddApplication', async (_event, company: string, jobTitle: string) => {
+ipcMain.handle('quickAddApplication', async (_event, company: string, jobTitle: string, jobSource: string | null = null) => {
   try {
     // Get or create default workflow for company
     let workflow = getDefaultWorkflowForCompany(company);
     if (!workflow) {
-      workflow = createWorkflow(company, `${company} Default Workflow`, ['started', 'applied', 'phone_screen', 'interview', 'offer'], true);
+      workflow = createWorkflow(company, `${company} Default Workflow`, ['applied', 'phone_screen', 'interview', 'offer'], true);
     }
 
     // Create minimal application entry
@@ -517,6 +783,7 @@ ipcMain.handle('quickAddApplication', async (_event, company: string, jobTitle: 
       job_title: jobTitle,
       location: '',
       job_url: '',
+      job_source: jobSource,
       salary_min: null,
       salary_max: null,
       equity: null,
@@ -532,8 +799,8 @@ ipcMain.handle('quickAddApplication', async (_event, company: string, jobTitle: 
 
     const application = createApplication(minimalData, workflow.id);
 
-    // Create initial stage history entry (start with 'started' status)
-    createStageHistory(application.id, 'started', 'Quick added - details to be filled in');
+    // Create initial stage history entry. Adding a job means you've applied.
+    createStageHistory(application.id, 'applied', 'Quick added - details to be filled in');
 
     return {
       success: true,

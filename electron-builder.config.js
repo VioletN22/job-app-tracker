@@ -1,18 +1,28 @@
 module.exports = {
-  appId: 'com.jobtracker.app',
-  productName: 'Job Application Tracker',
+  appId: 'com.purpl.aplyd',
+  productName: 'aplyd',
   directories: {
     buildResources: 'assets',
-    output: 'dist',
+    output: 'release',
   },
   files: [
     'dist/main/**/*',
     'dist/renderer/**/*',
     'node_modules/**/*',
     'package.json',
+    'assets/**/*',
+  ],
+  asarUnpack: [
+    'node_modules/better-sqlite3/**/*',
   ],
   mac: {
-    target: ['dmg', 'zip'],
+    icon: 'assets/icon.icns',
     category: 'public.app-category.productivity',
+    target: [
+      { target: 'dir', arch: ['arm64'] },
+    ],
   },
+  extraResources: [
+    { from: 'assets', to: 'assets' },
+  ],
 };

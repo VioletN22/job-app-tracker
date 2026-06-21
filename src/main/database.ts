@@ -1,4 +1,7 @@
-import Database from 'better-sqlite3';
+// Type-only import — erased at compile time so requiring this module is cheap.
+// The native better-sqlite3 binding loads lazily in initializeDatabase(), keeping
+// it off the app's cold-start critical path so the window can appear immediately.
+import type DatabaseType from 'better-sqlite3';
 import { app } from 'electron';
 import path from 'path';
 import { randomUUID } from 'crypto';
@@ -11,16 +14,28 @@ import {
   GuidanceContent,
   ExtractedJobData,
   Attachment,
+  AnswerBankEntry,
+  LockerDocument,
+  VoiceNote,
+  VoiceNoteKind,
+  PortfolioLink,
+  CoverLetter,
 } from '../shared/types';
 
-let db: Database.Database | null = null;
+let db: DatabaseType.Database | null = null;
 
 /**
  * Initialize the SQLite database with all tables and schema
  */
 export function initializeDatabase(): void {
+  // Idempotent — safe to call from both the deferred startup path and the
+  // macOS activate handler without leaking a second connection.
+  if (db) return;
+
   const dbPath = path.join(app.getPath('userData'), 'job-tracker.db');
 
+  // Lazy require — this is where the native binding actually loads.
+  const Database = require('better-sqlite3') as typeof import('better-sqlite3');
   db = new Database(dbPath);
 
   // Enable foreign keys
@@ -46,6 +61,7 @@ export function initializeDatabase(): void {
       job_title TEXT NOT NULL,
       location TEXT NOT NULL,
       job_url TEXT NOT NULL,
+      job_source TEXT,
       salary_min REAL,
       salary_max REAL,
       equity TEXT,
@@ -119,6 +135,58 @@ export function initializeDatabase(): void {
     )
   `);
 
+  // ── Autopilot: learnable answer bank, document locker, voice profile ──────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS answer_bank (
+      id TEXT PRIMARY KEY,
+      field_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      value TEXT NOT NULL,
+      context TEXT,
+      patterns TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS locker_documents (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      tags TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS voice_notes (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      note TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS portfolio_links (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      url TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cover_letters (
+      id TEXT PRIMARY KEY,
+      company TEXT NOT NULL,
+      role TEXT NOT NULL,
+      job_url TEXT,
+      body TEXT NOT NULL,
+      is_final INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
   // Create indices for common queries
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_applications_company ON applications(company);
@@ -129,12 +197,74 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_guidance_docs_stage ON guidance_docs(stage);
     CREATE INDEX IF NOT EXISTS idx_attachments_application_id ON attachments(application_id);
   `);
+
+  runMigrations();
+}
+
+/**
+ * Idempotent data migrations, run on every startup.
+ * Safe to run repeatedly — each is a no-op once applied.
+ */
+function runMigrations(): void {
+  if (!db) return;
+
+  // Add job_source to applications for DBs created before the field existed.
+  // ALTER throws "duplicate column name" once applied, so swallow that — it's
+  // how we keep this idempotent without a separate schema-version table.
+  try {
+    db.exec(`ALTER TABLE applications ADD COLUMN job_source TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  // One-time backfill: stamp every application that predates the job_source
+  // field as 'LinkedIn' (where they were all sourced from). Gated on
+  // user_version so it runs exactly once — new rows added later keep whatever
+  // source the user picks (or null), they don't get forced to LinkedIn.
+  const schemaVersion = db.pragma('user_version', { simple: true }) as number;
+  if (schemaVersion < 1) {
+    db.exec(
+      `UPDATE applications SET job_source = 'LinkedIn' WHERE job_source IS NULL OR job_source = ''`
+    );
+    db.pragma('user_version = 1');
+  }
+
+  // Merge the legacy 'started' stage into 'applied'. Adding a job to the tracker
+  // means you've applied, so there's no separate pre-apply bucket.
+  // 1. Drop redundant 'started' rows for apps that already have an 'applied' row.
+  db.exec(
+    `DELETE FROM stage_history
+       WHERE stage = 'started'
+         AND application_id IN (SELECT application_id FROM stage_history WHERE stage = 'applied')`
+  );
+  // 2. Rename remaining 'started' history rows to 'applied'.
+  db.exec(`UPDATE stage_history SET stage = 'applied' WHERE stage = 'started'`);
+  // 3. Update current stage on applications.
+  db.exec(`UPDATE applications SET current_stage = 'applied' WHERE current_stage = 'started'`);
+  // 4. Strip 'started' out of saved workflow stage lists.
+  const workflows = db.prepare(`SELECT id, stages FROM workflows`).all() as {
+    id: string;
+    stages: string;
+  }[];
+  const updateStages = db.prepare(`UPDATE workflows SET stages = ? WHERE id = ?`);
+  for (const wf of workflows) {
+    try {
+      const stages: string[] = JSON.parse(wf.stages);
+      if (stages.includes('started')) {
+        const cleaned = stages.filter((s) => s !== 'started');
+        if (!cleaned.includes('applied')) cleaned.unshift('applied');
+        updateStages.run(JSON.stringify(cleaned), wf.id);
+      }
+    } catch {
+      /* leave malformed rows untouched */
+    }
+  }
 }
 
 /**
  * Get the database instance
  */
-export function getDatabase(): Database.Database {
+export function getDatabase(): DatabaseType.Database {
   if (!db) {
     throw new Error('Database not initialized. Call initializeDatabase() first.');
   }
@@ -301,12 +431,12 @@ export function createApplication(
 
   const stmt = database.prepare(`
     INSERT INTO applications (
-      id, company, job_title, location, job_url,
+      id, company, job_title, location, job_url, job_source,
       salary_min, salary_max, equity, benefits,
       job_description, key_responsibilities, required_skills, nice_to_have_skills,
       team_info, hiring_timeline, application_deadline,
       current_stage, workflow_id, notes, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -315,6 +445,7 @@ export function createApplication(
     extractedData.job_title,
     extractedData.location,
     extractedData.job_url,
+    extractedData.job_source ?? null,
     extractedData.salary_min ?? null,
     extractedData.salary_max ?? null,
     extractedData.equity ?? null,
@@ -326,7 +457,7 @@ export function createApplication(
     extractedData.team_info ?? null,
     extractedData.hiring_timeline ?? null,
     extractedData.application_deadline ?? null,
-    'started',
+    'applied',
     workflowId,
     notes,
     now,
@@ -339,6 +470,7 @@ export function createApplication(
     job_title: extractedData.job_title,
     location: extractedData.location,
     job_url: extractedData.job_url,
+    job_source: extractedData.job_source ?? null,
     salary_min: extractedData.salary_min,
     salary_max: extractedData.salary_max,
     equity: extractedData.equity,
@@ -350,7 +482,7 @@ export function createApplication(
     team_info: extractedData.team_info,
     hiring_timeline: extractedData.hiring_timeline,
     application_deadline: extractedData.application_deadline,
-    current_stage: 'started',
+    current_stage: 'applied',
     workflow_id: workflowId,
     notes,
     created_at: now,
@@ -432,7 +564,7 @@ export function updateApplication(
 
   const stmt = database.prepare(`
     UPDATE applications
-    SET company = ?, job_title = ?, location = ?, job_url = ?,
+    SET company = ?, job_title = ?, location = ?, job_url = ?, job_source = ?,
         salary_min = ?, salary_max = ?, equity = ?, benefits = ?,
         job_description = ?, key_responsibilities = ?, required_skills = ?,
         nice_to_have_skills = ?, team_info = ?, hiring_timeline = ?,
@@ -446,6 +578,7 @@ export function updateApplication(
     updated.job_title,
     updated.location,
     updated.job_url,
+    updated.job_source ?? null,
     updated.salary_min ?? null,
     updated.salary_max ?? null,
     updated.equity ?? null,
@@ -687,6 +820,7 @@ function rowToApplication(row: any): JobApplication {
     job_title: row.job_title,
     location: row.location,
     job_url: row.job_url,
+    job_source: row.job_source ?? null,
     salary_min: row.salary_min,
     salary_max: row.salary_max,
     equity: row.equity,
@@ -789,4 +923,152 @@ export function deleteAttachment(id: string): void {
   const database = getDatabase();
   const stmt = database.prepare('DELETE FROM attachments WHERE id = ?');
   stmt.run(id);
+}
+
+// ── Autopilot: answer bank ───────────────────────────────────────────────────
+function rowToAnswer(row: any): AnswerBankEntry {
+  return {
+    id: row.id,
+    fieldKey: row.field_key,
+    label: row.label,
+    value: row.value,
+    context: row.context ?? null,
+    patterns: JSON.parse(row.patterns || '[]'),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function getAnswerBank(): AnswerBankEntry[] {
+  const db = getDatabase();
+  return (db.prepare('SELECT * FROM answer_bank ORDER BY label COLLATE NOCASE').all() as any[]).map(rowToAnswer);
+}
+
+export function upsertAnswer(input: Partial<AnswerBankEntry> & { value: string; label: string }): AnswerBankEntry {
+  const db = getDatabase();
+  const now = new Date().toISOString();
+  const patterns = JSON.stringify(input.patterns ?? []);
+  const fieldKey = input.fieldKey || input.label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  if (input.id) {
+    db.prepare('UPDATE answer_bank SET field_key=?, label=?, value=?, context=?, patterns=?, updated_at=? WHERE id=?')
+      .run(fieldKey, input.label, input.value, input.context ?? null, patterns, now, input.id);
+    return rowToAnswer(db.prepare('SELECT * FROM answer_bank WHERE id=?').get(input.id));
+  }
+  const id = randomUUID();
+  db.prepare('INSERT INTO answer_bank (id, field_key, label, value, context, patterns, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(id, fieldKey, input.label, input.value, input.context ?? null, patterns, now, now);
+  return rowToAnswer(db.prepare('SELECT * FROM answer_bank WHERE id=?').get(id));
+}
+
+export function deleteAnswer(id: string): void {
+  getDatabase().prepare('DELETE FROM answer_bank WHERE id=?').run(id);
+}
+
+// ── Autopilot: document locker ───────────────────────────────────────────────
+function rowToDoc(row: any): LockerDocument {
+  return {
+    id: row.id,
+    label: row.label,
+    filePath: row.file_path,
+    tags: JSON.parse(row.tags || '[]'),
+    isDefault: row.is_default === 1,
+    createdAt: row.created_at,
+  };
+}
+
+export function getDocuments(): LockerDocument[] {
+  const db = getDatabase();
+  return (db.prepare('SELECT * FROM locker_documents ORDER BY created_at DESC').all() as any[]).map(rowToDoc);
+}
+
+export function addDocument(label: string, filePath: string, tags: string[], isDefault: boolean): LockerDocument {
+  const db = getDatabase();
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  // a default replaces any existing default sharing its first tag
+  if (isDefault && tags[0]) {
+    for (const d of getDocuments()) {
+      if (d.isDefault && d.tags[0] === tags[0]) {
+        db.prepare('UPDATE locker_documents SET is_default=0 WHERE id=?').run(d.id);
+      }
+    }
+  }
+  db.prepare('INSERT INTO locker_documents (id, label, file_path, tags, is_default, created_at) VALUES (?,?,?,?,?,?)')
+    .run(id, label, filePath, JSON.stringify(tags), isDefault ? 1 : 0, now);
+  return rowToDoc(db.prepare('SELECT * FROM locker_documents WHERE id=?').get(id));
+}
+
+export function deleteDocument(id: string): void {
+  getDatabase().prepare('DELETE FROM locker_documents WHERE id=?').run(id);
+}
+
+// ── Autopilot: voice profile ─────────────────────────────────────────────────
+export function getVoiceNotes(): VoiceNote[] {
+  const db = getDatabase();
+  return (db.prepare('SELECT * FROM voice_notes ORDER BY created_at DESC').all() as any[]).map((r) => ({
+    id: r.id, kind: r.kind as VoiceNoteKind, note: r.note, createdAt: r.created_at,
+  }));
+}
+
+export function addVoiceNote(kind: VoiceNoteKind, note: string): VoiceNote {
+  const db = getDatabase();
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO voice_notes (id, kind, note, created_at) VALUES (?,?,?,?)').run(id, kind, note, now);
+  return { id, kind, note, createdAt: now };
+}
+
+export function deleteVoiceNote(id: string): void {
+  getDatabase().prepare('DELETE FROM voice_notes WHERE id=?').run(id);
+}
+
+// ── Autopilot: portfolio links (Claude can reference / fetch these) ───────────
+export function getPortfolioLinks(): PortfolioLink[] {
+  const db = getDatabase();
+  return (db.prepare('SELECT * FROM portfolio_links ORDER BY created_at DESC').all() as any[]).map((r) => ({
+    id: r.id, label: r.label, url: r.url, createdAt: r.created_at,
+  }));
+}
+
+export function addPortfolioLink(label: string, url: string): PortfolioLink {
+  const db = getDatabase();
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO portfolio_links (id, label, url, created_at) VALUES (?,?,?,?)').run(id, label, url, now);
+  return { id, label, url, createdAt: now };
+}
+
+export function deletePortfolioLink(id: string): void {
+  getDatabase().prepare('DELETE FROM portfolio_links WHERE id=?').run(id);
+}
+
+// ── Autopilot: cover-letter vault ────────────────────────────────────────────
+function rowToCover(r: any): CoverLetter {
+  return {
+    id: r.id, company: r.company, role: r.role, jobUrl: r.job_url,
+    body: r.body, isFinal: r.is_final === 1, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+export function getCoverLetters(): CoverLetter[] {
+  const db = getDatabase();
+  return (db.prepare('SELECT * FROM cover_letters ORDER BY updated_at DESC').all() as any[]).map(rowToCover);
+}
+
+export function saveCoverLetter(input: Partial<CoverLetter> & { company: string; role: string; body: string }): CoverLetter {
+  const db = getDatabase();
+  const now = new Date().toISOString();
+  if (input.id) {
+    db.prepare('UPDATE cover_letters SET company=?, role=?, job_url=?, body=?, is_final=?, updated_at=? WHERE id=?')
+      .run(input.company, input.role, input.jobUrl ?? null, input.body, input.isFinal ? 1 : 0, now, input.id);
+    return rowToCover(db.prepare('SELECT * FROM cover_letters WHERE id=?').get(input.id));
+  }
+  const id = randomUUID();
+  db.prepare('INSERT INTO cover_letters (id, company, role, job_url, body, is_final, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(id, input.company, input.role, input.jobUrl ?? null, input.body, input.isFinal ? 1 : 0, now, now);
+  return rowToCover(db.prepare('SELECT * FROM cover_letters WHERE id=?').get(id));
+}
+
+export function deleteCoverLetter(id: string): void {
+  getDatabase().prepare('DELETE FROM cover_letters WHERE id=?').run(id);
 }

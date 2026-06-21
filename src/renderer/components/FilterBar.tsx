@@ -14,7 +14,6 @@ interface FilterBarProps {
 
 const STAGE_OPTIONS = [
   { value: '', label: 'All stages' },
-  { value: 'started', label: 'Started' },
   { value: 'applied', label: 'Applied' },
   { value: 'oa', label: 'OA' },
   { value: 'phone_screen', label: 'Phone screen' },

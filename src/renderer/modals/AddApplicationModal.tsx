@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
+import { Dropdown } from '../components/Dropdown';
+import { JOB_SOURCES } from '../../shared/types';
 
 declare global {
   interface Window {
@@ -7,10 +9,17 @@ declare global {
   }
 }
 
+// "Not specified" first so the field is optional and resettable, then the
+// shared list of job sites.
+const SOURCE_OPTIONS = [
+  { value: '', label: 'Not specified' },
+  ...JOB_SOURCES.map((s) => ({ value: s, label: s })),
+];
+
 interface AddApplicationModalProps {
   onClose: () => void;
-  onSubmit: (jobListing: string) => Promise<void>;
-  onQuickAdd?: (company: string, jobTitle: string) => Promise<void>;
+  onSubmit: (jobListing: string, jobSource: string | null) => Promise<void>;
+  onQuickAdd?: (company: string, jobTitle: string, jobSource: string | null) => Promise<void>;
   isLoading?: boolean;
 }
 
@@ -24,6 +33,7 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
   const [jobListing, setJobListing] = useState('');
   const [company, setCompany] = useState('');
   const [jobTitle, setJobTitle] = useState('');
+  const [jobSource, setJobSource] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -53,10 +63,11 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
     try {
       setIsSubmitting(true);
       if (onQuickAdd) {
-        await onQuickAdd(company, jobTitle);
+        await onQuickAdd(company, jobTitle, jobSource || null);
       }
       setCompany('');
       setJobTitle('');
+      setJobSource('');
       onClose();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to add application';
@@ -80,10 +91,11 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
       setIsSubmitting(true);
       console.log('Starting Extract with AI...');
 
-      const result = await onSubmit(jobListing);
+      const result = await onSubmit(jobListing, jobSource || null);
       console.log('Extract result:', result);
 
       setJobListing('');
+      setJobSource('');
       onClose();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to add application';
@@ -189,6 +201,18 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
                 />
               </div>
 
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
+                  Job Source <span style={{ textTransform: 'none', letterSpacing: 0, color: 'var(--faint)' }}>· optional</span>
+                </label>
+                <Dropdown
+                  value={jobSource}
+                  options={SOURCE_OPTIONS}
+                  onChange={setJobSource}
+                  placeholder="Where did you find it?"
+                />
+              </div>
+
               <p style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '24px' }}>
                 You can add the job description, link, and other details after creation. Claude will help fill in the context.
               </p>
@@ -269,6 +293,18 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
                 >
                   Upload File
                 </button>
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
+                  Job Source <span style={{ textTransform: 'none', letterSpacing: 0, color: 'var(--faint)' }}>· optional</span>
+                </label>
+                <Dropdown
+                  value={jobSource}
+                  options={SOURCE_OPTIONS}
+                  onChange={setJobSource}
+                  placeholder="Where did you find it? (AI will guess if left blank)"
+                />
               </div>
 
               <div className="modal-footer">

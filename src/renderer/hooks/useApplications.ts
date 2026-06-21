@@ -6,6 +6,8 @@ interface UseApplicationsReturn {
   loading: boolean;
   error: string | null;
   refresh: (filters?: any) => Promise<void>;
+  // Update one application in place (no reload) so the list doesn't reset scroll.
+  patch: (id: string, changes: Partial<JobApplication>) => void;
 }
 
 export function useApplications(): UseApplicationsReturn {
@@ -28,9 +30,13 @@ export function useApplications(): UseApplicationsReturn {
     }
   };
 
+  const patch = (id: string, changes: Partial<JobApplication>) => {
+    setApplications((apps) => apps.map((a) => (a.id === id ? { ...a, ...changes } : a)));
+  };
+
   useEffect(() => {
     refresh();
   }, []);
 
-  return { applications, loading, error, refresh };
+  return { applications, loading, error, refresh, patch };
 }

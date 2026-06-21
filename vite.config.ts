@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
+  // Relative base so assets resolve under file:// in the packaged app
+  base: './',
   plugins: [react()],
   resolve: {
     alias: {
