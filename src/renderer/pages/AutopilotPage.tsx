@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, FileText, Brain, MessageSquareHeart, Sparkles, Link2, PenLine, Lock, Wand2, Check, ThumbsUp, ThumbsDown, Play, Square, Send, Inbox, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Plus, Trash2, FileText, Brain, MessageSquareHeart, Sparkles, Link2, PenLine, Lock, Wand2, Check, ThumbsUp, ThumbsDown, Play, Square, Send, Inbox, AlertTriangle, RotateCcw, Search } from 'lucide-react';
 import { AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter, AutopilotJob, AutopilotNeed, DriveStatus } from '../../shared/types';
 
 const api = () => window.electronAPI.autopilot;
@@ -57,6 +57,7 @@ export const AutopilotPage: React.FC = () => {
       </p>
 
       <CockpitSection />
+      <ProfileSection />
 
       <AnswerBankSection answers={answers} reload={reload} />
       <DocumentLockerSection docs={docs} reload={reload} />
@@ -74,9 +75,13 @@ const STATE_LABEL: Record<string, string> = {
   logged: 'Logged', skipped: 'Skipped', failed: 'Failed',
 };
 
+const BOARD_OPTS = [{ id: 'linkedin', label: 'LinkedIn' }, { id: 'seek', label: 'Seek (AU)' }, { id: 'indeed', label: 'Indeed (AU)' }];
+
 const CockpitSection: React.FC = () => {
   const [jobs, setJobs] = useState<AutopilotJob[]>([]);
   const [needs, setNeeds] = useState<AutopilotNeed[]>([]);
+  const [searches, setSearches] = useState<SavedSearch[]>([]);
+  const [settings, setSettings] = useState<AutopilotSettings | null>(null);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('Idle');
   const [urls, setUrls] = useState('');
@@ -85,6 +90,8 @@ const CockpitSection: React.FC = () => {
   const refresh = async () => {
     const s = await drive().status();
     setJobs(s.jobs); setNeeds(s.needs); setRunning(s.running);
+    setSearches(await window.electronAPI.search.getAll());
+    setSettings(await window.electronAPI.settings.get());
   };
   useEffect(() => {
     refresh();
@@ -97,6 +104,8 @@ const CockpitSection: React.FC = () => {
     return () => { off(); clearInterval(t); };
   }, []);
 
+  const saveSettings = async (patch: Partial<AutopilotSettings>) => { setSettings(await window.electronAPI.settings.set(patch)); };
+
   const enqueue = async () => {
     const list = urls.split(/[\s,]+/).map((u) => u.trim()).filter((u) => /^https?:\/\//.test(u));
     if (!list.length) return;
@@ -106,7 +115,8 @@ const CockpitSection: React.FC = () => {
     await refresh();
     setBusy(false);
   };
-  const run = async () => { await drive().run(); setRunning(true); };
+  const run = async () => { await drive().runFull(); setRunning(true); };
+  const harvest = async () => { await drive().harvest(); setRunning(true); };
   const stop = async () => { await drive().stop(); };
   const approve = async (id: string) => { setBusy(true); await drive().approve(id); await refresh(); setBusy(false); };
   const approveAll = async () => { setBusy(true); await drive().approveAll(); await refresh(); setBusy(false); };
@@ -128,8 +138,24 @@ const CockpitSection: React.FC = () => {
     <div style={{ ...card, borderColor: 'var(--accent, #f23a17)' }}>
       <SectionHead icon={<Play size={16} />} title="Cockpit" count={jobs.length} />
       <p style={{ fontSize: 12, opacity: 0.6, marginTop: 0 }}>
-        Drive applications autonomously across any board, then review before anything sends. It never auto-submits.
+        Sources jobs across boards, fit-scores them, fills the best, then waits for your review. It never auto-submits.
       </p>
+
+      {/* settings bar: master toggle + targets + schedule */}
+      {settings && (
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', padding: '10px 12px', marginBottom: 12, borderRadius: 10, border: '1px solid var(--ink, rgba(0,0,0,.12))' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            <input type="checkbox" checked={settings.enabled} onChange={(e) => saveSettings({ enabled: e.target.checked })} />
+            Daily auto-run
+          </label>
+          <label style={{ fontSize: 12, opacity: 0.8 }}>at <input type="time" value={settings.runTime} onChange={(e) => saveSettings({ runTime: e.target.value })} style={{ ...input, width: 110, display: 'inline-block', padding: '4px 6px' }} /></label>
+          <label style={{ fontSize: 12, opacity: 0.8 }}>Target/day <input type="number" min={1} max={200} value={settings.dailyTarget} onChange={(e) => saveSettings({ dailyTarget: Number(e.target.value) })} style={{ ...input, width: 64, display: 'inline-block', padding: '4px 6px' }} /></label>
+          <label style={{ fontSize: 12, opacity: 0.8 }}>Min fit <input type="number" min={0} max={100} value={settings.minFit} onChange={(e) => saveSettings({ minFit: Number(e.target.value) })} style={{ ...input, width: 56, display: 'inline-block', padding: '4px 6px' }} /></label>
+        </div>
+      )}
+
+      {/* saved searches */}
+      <SavedSearchManager searches={searches} reload={refresh} onHarvest={harvest} running={running} />
 
       {/* run controls */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 12 }}>
@@ -145,7 +171,7 @@ const CockpitSection: React.FC = () => {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
         {running
           ? <button style={{ ...btn, borderColor: 'var(--accent, #f23a17)', color: 'var(--accent, #f23a17)' }} onClick={stop}><Square size={13} /> Stop</button>
-          : <button style={{ ...btn, background: 'var(--accent, #f23a17)', color: '#fff', borderColor: 'var(--accent, #f23a17)' }} onClick={run} disabled={!active.length}><Play size={13} /> Run now</button>}
+          : <button style={{ ...btn, background: 'var(--accent, #f23a17)', color: '#fff', borderColor: 'var(--accent, #f23a17)' }} onClick={run} disabled={!active.length && !searches.some((s) => s.enabled)}><Play size={13} /> Run now</button>}
         {ready.length > 0 && (
           <button style={{ ...btn }} onClick={approveAll} disabled={busy}><Send size={13} /> Submit all ({ready.length})</button>
         )}
@@ -247,9 +273,12 @@ const ReadyCard: React.FC<{ job: AutopilotJob; onApprove: () => void; busy: bool
     <div style={{ border: '1px solid var(--accent, #f23a17)', borderRadius: 10, padding: 10, marginBottom: 10, display: 'flex', gap: 12 }}>
       {shot && <img src={shot} alt="" style={{ width: 120, height: 78, objectFit: 'cover', objectPosition: 'top', borderRadius: 6, border: '1px solid var(--ink, rgba(0,0,0,.15))' }} />}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 700 }}>{job.company || 'Unknown'}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+          {job.company || 'Unknown'}
+          {job.fitScore != null && <span style={{ ...tagChip, opacity: 0.85 }}>fit {job.fitScore}</span>}
+        </div>
         <div style={{ fontSize: 12, opacity: 0.7 }}>{job.title || 'Role'}</div>
-        <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>{job.filledCount} fields filled</div>
+        <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>{job.filledCount} fields filled{job.fitReason ? ` · ${job.fitReason}` : ''}</div>
         <a href={job.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, opacity: 0.5, textDecoration: 'none', color: 'inherit' }}>{job.url.slice(0, 54)}</a>
       </div>
       <button style={{ ...btn, alignSelf: 'center', background: 'var(--accent, #f23a17)', color: '#fff', borderColor: 'var(--accent, #f23a17)' }} onClick={onApprove} disabled={busy}>
@@ -271,6 +300,74 @@ const JobRow: React.FC<{ job: AutopilotJob }> = ({ job }) => (
     <button style={{ ...btn, padding: 6 }} onClick={() => drive().deleteJob(job.id)}><Trash2 size={13} /></button>
   </div>
 );
+
+const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void; onHarvest: () => void; running: boolean }> = ({ searches, reload, onHarvest, running }) => {
+  const [board, setBoard] = useState('linkedin');
+  const [query, setQuery] = useState('');
+  const [loc, setLoc] = useState('');
+  const add = async () => {
+    if (!query.trim()) return;
+    await window.electronAPI.search.add(board, query.trim(), loc.trim());
+    setQuery(''); setLoc(''); reload();
+  };
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+        <Search size={14} /> Saved searches
+        {searches.some((s) => s.enabled) && (
+          <button style={{ ...btn, padding: '3px 8px', fontSize: 11, marginLeft: 'auto' }} onClick={onHarvest} disabled={running}>Harvest now</button>
+        )}
+      </div>
+      {searches.map((s) => (
+        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
+          <input type="checkbox" checked={s.enabled} onChange={(e) => { window.electronAPI.search.setEnabled(s.id, e.target.checked).then(reload); }} />
+          <span style={{ ...tagChip, opacity: 0.7 }}>{BOARD_OPTS.find((b) => b.id === s.board)?.label || s.board}</span>
+          <span style={{ flex: 1, fontSize: 13 }}>{s.query}{s.location ? <span style={{ opacity: 0.55 }}> · {s.location}</span> : null}</span>
+          <button style={{ ...btn, padding: 6 }} onClick={() => window.electronAPI.search.delete(s.id).then(reload)}><Trash2 size={13} /></button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        <select value={board} onChange={(e) => setBoard(e.target.value)} style={{ ...input, width: 130 }}>
+          {BOARD_OPTS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+        </select>
+        <input style={input} placeholder="Role / keywords" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+        <input style={{ ...input, width: 150 }} placeholder="Location" value={loc} onChange={(e) => setLoc(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+        <button style={btn} onClick={add}><Plus size={14} /></button>
+      </div>
+    </div>
+  );
+};
+
+// ── Structured profile (Core) ────────────────────────────────────────────────
+const PROFILE_FIELDS = ['Full name', 'Email', 'Phone', 'Location', 'Work authorization', 'Require visa sponsorship', 'Years of experience', 'Current title', 'LinkedIn', 'GitHub', 'Portfolio', 'Salary expectation', 'Notice period', 'Open to remote'];
+
+const ProfileSection: React.FC = () => {
+  const [profile, setProfile] = useState<Record<string, string>>({});
+  const [seeding, setSeeding] = useState(false);
+  const load = async () => setProfile(await window.electronAPI.profile.get());
+  useEffect(() => { load(); }, []);
+  const setField = (k: string, v: string) => setProfile((p) => ({ ...p, [k]: v }));
+  const save = async () => { await window.electronAPI.profile.set(profile); };
+  const seed = async () => { setSeeding(true); const merged = await window.electronAPI.profile.seed(); setProfile(merged); setSeeding(false); };
+  const keys = Array.from(new Set([...PROFILE_FIELDS, ...Object.keys(profile)]));
+  return (
+    <section style={card}>
+      <SectionHead icon={<Brain size={16} />} title="Profile" count={Object.values(profile).filter(Boolean).length}
+        action={<button style={btn} onClick={seed} disabled={seeding}><Wand2 size={14} /> {seeding ? 'Reading resume…' : 'Seed from resume'}</button>} />
+      <p style={{ fontSize: 12, opacity: 0.6, marginTop: 0 }}>
+        The standard fields every ATS asks. Filled instantly during autopilot. Seed pulls what it can from your resume; edit anything.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+        {keys.map((k) => (
+          <label key={k} style={{ fontSize: 11, opacity: 0.85 }}>
+            <div style={{ marginBottom: 3, fontWeight: 600 }}>{k}</div>
+            <input style={input} value={profile[k] || ''} onChange={(e) => setField(k, e.target.value)} onBlur={save} />
+          </label>
+        ))}
+      </div>
+    </section>
+  );
+};
 
 // ── Portfolio links ──────────────────────────────────────────────────────────
 const PortfolioSection: React.FC<{ links: PortfolioLink[]; reload: () => void }> = ({ links, reload }) => {

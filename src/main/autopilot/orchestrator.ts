@@ -12,13 +12,15 @@ import {
   ensureBrowser, openJob, injectSource, evalInTab, screenshot, closeTab, Tab, BridgeMsg,
 } from './driver';
 import { INJECTED_SOURCE } from './injected';
+import { harvestSearch, boardById } from './sources';
 import { runClaudeCLI } from '../claude';
 import {
-  resolveFieldPrompt, tailorAnswerPrompt, parseFieldAction,
+  resolveFieldPrompt, tailorAnswerPrompt, parseFieldAction, fitScorePrompt, parseFitScore,
 } from '../autopilot-prompts';
 import {
   getAnswerBank, getDocuments,
   getAutopilotJobs, getAutopilotJob, updateJob, upsertNeed, getOpenNeeds, lookupAnsweredNeed,
+  getSavedSearches, enqueuePosting, isJobKnown, getAutopilotSettings, countLoggedToday,
 } from '../database';
 import type { AnswerBankEntry, AutopilotJob, AutopilotJobState, DriveStatus } from '../../shared/types';
 
@@ -178,6 +180,10 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps): Promise<void> {
     const stillOpen = parkedHere.filter((nl) => openNorms.has(nl)).length;
     updateJob(job.id, { needsCount: stillOpen, state: stillOpen > 0 ? 'needs_input' : (reachedReview ? 'ready' : 'failed'), error: reachedReview ? null : 'could not fill any fields' });
   } catch (e: any) {
+    // Vision fallback (Phase 4, pragmatic): we can't reliably auto-solve a login
+    // wall / captcha / unknown ATS, so capture the screen so the failure is
+    // actionable — you see exactly where it stuck and can finish it by hand.
+    if (tab) { try { const shot = await screenshot(tab, job.id); updateJob(job.id, { screenshotPath: shot }); } catch { /* ignore */ } }
     updateJob(job.id, { state: 'failed', error: String(e && e.message ? e.message : e) });
   } finally {
     if (tab) await closeTab(tab);
@@ -211,6 +217,73 @@ export async function runDrive(deps: DriveDeps): Promise<void> {
 }
 
 export function stopDrive(): void { cancelled = true; }
+
+// ── Harvest: source → dedupe → fit-score → enqueue top-N ─────────────────────
+const SCORE_BUDGET = 80; // cap Claude scoring calls per harvest
+
+export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueued: number }> {
+  const searches = getSavedSearches().filter((s) => s.enabled);
+  if (!searches.length) { emitStatus(deps, 'No saved searches'); return { found: 0, enqueued: 0 }; }
+  const settings = getAutopilotSettings();
+  await ensureBrowser();
+
+  // 1. harvest every enabled search, dedupe by URL, drop already-known jobs
+  const byUrl = new Map<string, any>();
+  for (const s of searches) {
+    if (cancelled) break;
+    const board = boardById(s.board);
+    if (!board) continue;
+    emitStatus(deps, `Searching ${board.label}: ${s.query}`);
+    let postings: any[] = [];
+    try { postings = await harvestSearch(board, s.query, s.location); } catch { postings = []; }
+    for (const p of postings) {
+      const key = (p.url || '').split('?')[0];
+      if (!key || byUrl.has(key) || isJobKnown(key)) continue;
+      byUrl.set(key, p);
+    }
+    await sleep(rand(1500, 3500));
+  }
+  const fresh = [...byUrl.values()];
+  emitStatus(deps, `Found ${fresh.length} new postings, scoring…`);
+
+  // 2. fit-score (cap the number of Claude calls), keep those above minFit
+  const remainingToday = Math.max(0, settings.dailyTarget - countLoggedToday() - getAutopilotJobs().filter((j) => ['queued', 'needs_input', 'ready'].includes(j.state)).length);
+  const target = Math.max(0, remainingToday);
+  const scored: { p: any; score: number; reason: string }[] = [];
+  for (const p of fresh.slice(0, SCORE_BUDGET)) {
+    if (cancelled) break;
+    const out = await runClaudeCLI(fitScorePrompt(p), 30000).catch(() => '');
+    const { score, reason } = parseFitScore(out);
+    scored.push({ p, score, reason });
+  }
+  scored.sort((a, b) => b.score - a.score);
+
+  // 3. enqueue the best, above threshold, up to the remaining daily target
+  let enqueued = 0;
+  for (const s of scored) {
+    if (target && enqueued >= target) break;
+    if (s.score < settings.minFit) continue;
+    const job = enqueuePosting(s.p, s.score, s.reason);
+    if (job) enqueued++;
+  }
+  emitStatus(deps, `Queued ${enqueued} of ${fresh.length} (target ${target || '∞'})`);
+  return { found: fresh.length, enqueued };
+}
+
+// Full cycle: harvest fresh jobs, then drive everything queued.
+export async function runFull(deps: DriveDeps): Promise<void> {
+  if (running) return;
+  running = true; cancelled = false;
+  try {
+    await ensureBrowser();
+    if (getSavedSearches().some((s) => s.enabled)) {
+      try { await harvest(deps); } catch (e: any) { emitStatus(deps, 'Harvest error: ' + String(e?.message || e)); }
+    }
+  } finally {
+    running = false;
+  }
+  if (!cancelled) await runDrive(deps);
+}
 
 // Approve a ready job: reopen, ensure at the submit step, click Submit, log it.
 export async function approveJob(jobId: string, deps: DriveDeps): Promise<{ ok: boolean; error?: string }> {

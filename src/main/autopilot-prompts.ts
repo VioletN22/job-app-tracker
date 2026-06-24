@@ -6,9 +6,20 @@ import fs from 'fs';
 import http from 'http';
 import https from 'https';
 import {
-  getAnswerBank, getDocuments, getVoiceNotes, getPortfolioLinks,
+  getAnswerBank, getDocuments, getVoiceNotes, getPortfolioLinks, getSetting,
 } from './database';
-import type { AnswerBankEntry } from '../shared/types';
+import type { AnswerBankEntry, JobPosting } from '../shared/types';
+
+// The structured profile (identity / work-auth / salary / locations / links),
+// stored as a JSON object in app_settings under 'profile'. Rendered as facts.
+export function getProfile(): Record<string, string> {
+  try { const raw = getSetting('profile'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+}
+export function structuredProfileBlock(): string {
+  const p = getProfile();
+  const lines = Object.entries(p).filter(([, v]) => v && String(v).trim()).map(([k, v]) => `- ${k}: ${v}`);
+  return lines.length ? lines.join('\n') : '(none yet)';
+}
 
 export function factsBlock(bank: AnswerBankEntry[] = getAnswerBank()): string {
   return bank.map((e) => `- ${e.label}${e.context ? ` (${e.context})` : ''}: ${e.value}`).join('\n') || '(none yet)';
@@ -165,7 +176,7 @@ export function resolveFieldPrompt(opts: { label: string; type?: string; options
   return (
     `You are filling out a job-application form field on the user's behalf.\n` +
     `Field label: "${opts.label}"\nField type: ${opts.type || 'text'}\n${optionsLine}` +
-    `Known facts about the user:\n${factsBlock()}\nPortfolio:\n${portfolioBlock()}\n\n` +
+    `Profile:\n${structuredProfileBlock()}\nKnown facts about the user:\n${factsBlock()}\nPortfolio:\n${portfolioBlock()}\n\n` +
     `If you can confidently fill this from the known facts (or it's a standard field like a yes/no work-authorization the facts answer), respond ONLY with JSON: {"action":"fill","value":"..."}.\n` +
     `If filling it would require personal info NOT present in the facts, respond ONLY with JSON: {"action":"ask","hint":"<one-line plain description of what's being asked>"}.`
   );
@@ -183,6 +194,60 @@ export function tailorAnswerPrompt(opts: { question: string; jobText?: string })
     `WRITING STYLE TO FOLLOW:\n${likes}\nAVOID:\n${avoid}\n\n` +
     `Be concise and specific. No corporate fluff. Respond with ONLY the answer text, no preamble or quotes.`
   );
+}
+
+// Score a harvested posting against the user's real background. Cheap + strict:
+// we only auto-apply to good matches, so a wrong-direction role should score low.
+export function fitScorePrompt(p: JobPosting): string {
+  const resume = resumeText();
+  return (
+    `Rate how well THIS job fits the user, 0-100, for the purpose of auto-applying on their behalf.\n` +
+    `Score high only for roles the user is genuinely a plausible candidate for (right field, right seniority, location/remote workable). Score low for wrong field, wrong seniority, or clear dealbreakers.\n\n` +
+    `JOB:\nTitle: ${p.title}\nCompany: ${p.company}\nLocation: ${p.location}\n${p.snippet ? 'Snippet: ' + p.snippet.slice(0, 600) + '\n' : ''}\n` +
+    `USER PROFILE:\n${structuredProfileBlock()}\n\nUSER FACTS:\n${factsBlock()}\n` +
+    (resume ? `\nUSER RESUME:\n${resume.slice(0, 4000)}\n` : '') +
+    `\nRespond ONLY with JSON: {"score": <0-100 integer>, "reason": "<≤12 words>"}.`
+  );
+}
+export function parseFitScore(out: string): { score: number; reason: string } {
+  try {
+    const m = out.match(/\{[\s\S]*\}/);
+    if (m) {
+      const j = JSON.parse(m[0]);
+      const score = Math.max(0, Math.min(100, Math.round(Number(j.score))));
+      if (!Number.isNaN(score)) return { score, reason: String(j.reason || '').slice(0, 120) };
+    }
+  } catch { /* fall through */ }
+  return { score: 0, reason: 'could not score' };
+}
+
+// Seed the structured profile from the resume + known facts. Returns a flat
+// map of standard application fields. Only fields the resume/facts actually
+// support are included (no guessing personal/legal details).
+export function profileSeedPrompt(): string {
+  const resume = resumeText();
+  return (
+    `Extract a structured job-application profile from the user's materials below.\n` +
+    `Return ONLY JSON: a flat object whose keys are standard application fields and whose values are the user's answers. Use these keys where the materials support them: ` +
+    `"Full name", "Email", "Phone", "Location", "Work authorization", "Require visa sponsorship", "Years of experience", "Current title", "LinkedIn", "GitHub", "Portfolio", "Salary expectation", "Notice period", "Open to remote".\n` +
+    `Omit any key you cannot fill from the materials (do not invent). Keep values short.\n\n` +
+    (resume ? `RESUME:\n${resume.slice(0, 6000)}\n\n` : '') +
+    `KNOWN FACTS:\n${factsBlock()}\n\nPORTFOLIO:\n${portfolioBlock()}`
+  );
+}
+export function parseProfileSeed(out: string): Record<string, string> {
+  try {
+    const m = out.match(/\{[\s\S]*\}/);
+    if (m) {
+      const j = JSON.parse(m[0]);
+      const clean: Record<string, string> = {};
+      for (const [k, v] of Object.entries(j)) {
+        if (v != null && String(v).trim()) clean[k] = String(v).trim().slice(0, 200);
+      }
+      return clean;
+    }
+  } catch { /* fall through */ }
+  return {};
 }
 
 export function parseFieldAction(out: string): { action: 'fill' | 'ask'; value?: string; hint?: string } {

@@ -64,13 +64,21 @@ import {
   clearFinishedJobs,
   getOpenNeeds,
   answerNeed,
+  getSavedSearches,
+  addSavedSearch,
+  setSavedSearchEnabled,
+  deleteSavedSearch,
+  getAutopilotSettings,
+  setAutopilotSettings,
+  getSetting,
+  setSetting,
 } from './database';
 import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
 import {
-  runDrive, stopDrive, approveJob, approveAll, isDriveRunning, DriveDeps,
+  runDrive, runFull, harvest, stopDrive, approveJob, approveAll, isDriveRunning, DriveDeps,
 } from './autopilot/orchestrator';
 import { shutdown as shutdownDriveBrowser } from './autopilot/driver';
-import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot } from './autopilot-prompts';
+import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot, profileSeedPrompt, parseProfileSeed } from './autopilot-prompts';
 import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
 import { getFlowData } from './flow';
 import { getLicenseStatus, activateLicense, deactivateLicense } from './license';
@@ -215,6 +223,28 @@ const driveDeps: DriveDeps = {
   emit: (status) => { try { mainWindow?.webContents.send('autopilot:drive:progress', status); } catch { /* window gone */ } },
 };
 
+// ── Daily scheduler (master toggle gated) ────────────────────────────────────
+// A once-a-minute tick fires the full harvest+drive cycle when autopilot is
+// enabled and the clock reaches the configured runTime, at most once per day.
+let scheduleTimer: NodeJS.Timeout | null = null;
+function rescheduleDaily(): void {
+  if (scheduleTimer) return; // single shared ticker; settings are read each tick
+  scheduleTimer = setInterval(() => {
+    try {
+      const s = getAutopilotSettings();
+      if (!s.enabled) return;
+      const now = new Date();
+      const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      if (hhmm !== (s.runTime || '08:00')) return;
+      const today = now.toISOString().slice(0, 10);
+      if (getSetting('last_scheduled_run') === today) return;
+      setSetting('last_scheduled_run', today);
+      log('[autopilot] scheduled daily run firing at ' + hhmm);
+      runFull(driveDeps);
+    } catch (e) { log('[autopilot] scheduler error', e); }
+  }, 60 * 1000);
+}
+
 app.whenReady().then(() => {
   log('[whenReady] uptime=' + process.uptime().toFixed(3) + ' isPackaged=' + app.isPackaged);
   isStarting = true;
@@ -253,6 +283,7 @@ app.whenReady().then(() => {
       },
     });
     log('[autopilot] bridge listening on 127.0.0.1:' + AUTOPILOT_PORT);
+    rescheduleDaily(); // start the daily-run ticker (gated by the master toggle)
   } catch (e) {
     log('[autopilot] failed to start bridge', e);
   }
@@ -521,6 +552,30 @@ ipcMain.handle('autopilot:drive:shot', async (_e, filePath: string) => {
     if (!filePath || !fs.existsSync(filePath)) return null;
     return 'data:image/png;base64,' + fs.readFileSync(filePath).toString('base64');
   } catch { return null; }
+});
+
+// ── Autopilot Phase 2/3: sourcing, fit, saved searches, settings, profile ────
+ipcMain.handle('autopilot:drive:harvest', async () => { harvest(driveDeps); return { ok: true }; });
+ipcMain.handle('autopilot:drive:runFull', async () => { runFull(driveDeps); return { ok: true }; });
+ipcMain.handle('autopilot:search:getAll', async () => getSavedSearches());
+ipcMain.handle('autopilot:search:add', async (_e, board: string, query: string, location: string) => addSavedSearch(board, query, location));
+ipcMain.handle('autopilot:search:setEnabled', async (_e, id: string, enabled: boolean) => { setSavedSearchEnabled(id, enabled); return { ok: true }; });
+ipcMain.handle('autopilot:search:delete', async (_e, id: string) => { deleteSavedSearch(id); return { ok: true }; });
+ipcMain.handle('autopilot:settings:get', async () => getAutopilotSettings());
+ipcMain.handle('autopilot:settings:set', async (_e, patch) => { const next = setAutopilotSettings(patch); rescheduleDaily(); return next; });
+ipcMain.handle('autopilot:profile:get', async () => { try { return JSON.parse(getSetting('profile') || '{}'); } catch { return {}; } });
+ipcMain.handle('autopilot:profile:set', async (_e, profile: Record<string, string>) => { setSetting('profile', JSON.stringify(profile || {})); return { ok: true }; });
+ipcMain.handle('autopilot:profile:seed', async () => {
+  const out = await runClaudeCLI(profileSeedPrompt(), 60000).catch(() => '');
+  const seeded = parseProfileSeed(out);
+  if (Object.keys(seeded).length) {
+    let current: Record<string, string> = {};
+    try { current = JSON.parse(getSetting('profile') || '{}'); } catch { /* ignore */ }
+    const merged = { ...seeded, ...current }; // never clobber values you already set
+    setSetting('profile', JSON.stringify(merged));
+    return merged;
+  }
+  return {};
 });
 
 // ── Autopilot IPC Handlers (answer bank / document locker / voice profile) ───

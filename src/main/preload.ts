@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { JobApplication, Workflow, AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter, AutopilotJob, AutopilotNeed, DriveStatus } from '../shared/types';
+import { JobApplication, Workflow, AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter, AutopilotJob, AutopilotNeed, DriveStatus, SavedSearch, AutopilotSettings } from '../shared/types';
 
 // Define the API object
 const electronAPI = {
@@ -91,6 +91,8 @@ const electronAPI = {
     enqueue: (urls: string[]): Promise<{ added: number; jobs: AutopilotJob[] }> =>
       ipcRenderer.invoke('autopilot:drive:enqueue', urls),
     run: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:run'),
+    runFull: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:runFull'),
+    harvest: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:harvest'),
     stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:stop'),
     getJobs: (): Promise<AutopilotJob[]> => ipcRenderer.invoke('autopilot:drive:getJobs'),
     getNeeds: (): Promise<AutopilotNeed[]> => ipcRenderer.invoke('autopilot:drive:getNeeds'),
@@ -109,6 +111,31 @@ const electronAPI = {
       ipcRenderer.on('autopilot:drive:progress', handler);
       return () => ipcRenderer.removeListener('autopilot:drive:progress', handler);
     },
+  },
+
+  // Saved searches (Phase 2 sourcing)
+  search: {
+    getAll: (): Promise<SavedSearch[]> => ipcRenderer.invoke('autopilot:search:getAll'),
+    add: (board: string, query: string, location: string): Promise<SavedSearch> =>
+      ipcRenderer.invoke('autopilot:search:add', board, query, location),
+    setEnabled: (id: string, enabled: boolean): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('autopilot:search:setEnabled', id, enabled),
+    delete: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:search:delete', id),
+  },
+
+  // Autopilot settings (master toggle, daily target, schedule)
+  settings: {
+    get: (): Promise<AutopilotSettings> => ipcRenderer.invoke('autopilot:settings:get'),
+    set: (patch: Partial<AutopilotSettings>): Promise<AutopilotSettings> =>
+      ipcRenderer.invoke('autopilot:settings:set', patch),
+  },
+
+  // Structured profile (Core)
+  profile: {
+    get: (): Promise<Record<string, string>> => ipcRenderer.invoke('autopilot:profile:get'),
+    set: (profile: Record<string, string>): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('autopilot:profile:set', profile),
+    seed: (): Promise<Record<string, string>> => ipcRenderer.invoke('autopilot:profile:seed'),
   },
 
   // Quick add operation

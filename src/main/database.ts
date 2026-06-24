@@ -22,6 +22,9 @@ import {
   CoverLetter,
   AutopilotJob,
   AutopilotNeed,
+  JobPosting,
+  SavedSearch,
+  AutopilotSettings,
 } from '../shared/types';
 
 let db: DatabaseType.Database | null = null;
@@ -199,12 +202,32 @@ export function initializeDatabase(): void {
       title TEXT,
       state TEXT NOT NULL DEFAULT 'queued',
       fit_score INTEGER,
+      fit_reason TEXT,
+      source TEXT,
       filled_count INTEGER NOT NULL DEFAULT 0,
       needs_count INTEGER NOT NULL DEFAULT 0,
       screenshot_path TEXT,
       error TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    )
+  `);
+  // Reusable board searches the agent harvests each run.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS saved_searches (
+      id TEXT PRIMARY KEY,
+      board TEXT NOT NULL,
+      query TEXT NOT NULL,
+      location TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    )
+  `);
+  // Generic key/value settings (master toggle, daily target, schedule, profile JSON).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
     )
   `);
   // Deduplicated "Needs you" inbox: one row per unique normalized question across
@@ -256,6 +279,10 @@ function runMigrations(): void {
   } catch {
     /* column already exists */
   }
+
+  // Autopilot fit-scoring columns for DBs created before Phase 2.
+  try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN fit_reason TEXT`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN source TEXT`); } catch { /* exists */ }
 
   // One-time backfill: stamp every application that predates the job_source
   // field as 'LinkedIn' (where they were all sourced from). Gated on
@@ -1117,7 +1144,8 @@ export function deleteCoverLetter(id: string): void {
 function rowToJob(r: any): AutopilotJob {
   return {
     id: r.id, url: r.url, company: r.company ?? null, title: r.title ?? null,
-    state: r.state, fitScore: r.fit_score ?? null,
+    state: r.state, fitScore: r.fit_score ?? null, fitReason: r.fit_reason ?? null,
+    source: r.source ?? null,
     filledCount: r.filled_count ?? 0, needsCount: r.needs_count ?? 0,
     screenshotPath: r.screenshot_path ?? null, error: r.error ?? null,
     createdAt: r.created_at, updatedAt: r.updated_at,
@@ -1153,7 +1181,8 @@ export function updateJob(id: string, patch: Partial<AutopilotJob>): void {
   const db = getDatabase();
   const map: Record<string, string> = {
     url: 'url', company: 'company', title: 'title', state: 'state',
-    fitScore: 'fit_score', filledCount: 'filled_count', needsCount: 'needs_count',
+    fitScore: 'fit_score', fitReason: 'fit_reason', source: 'source',
+    filledCount: 'filled_count', needsCount: 'needs_count',
     screenshotPath: 'screenshot_path', error: 'error',
   };
   const sets: string[] = [];
@@ -1225,4 +1254,82 @@ export function answerNeed(id: string, value: string): AutopilotNeed | null {
   db.prepare(`UPDATE autopilot_needs SET status='answered', answer=?, answered_at=? WHERE id=?`).run(value, now, id);
   try { upsertAnswer({ label: need.label, value, patterns: [need.label] }); } catch { /* best effort */ }
   return rowToNeed(db.prepare('SELECT * FROM autopilot_needs WHERE id=?').get(id));
+}
+
+// ── Autopilot: harvesting + dedup ────────────────────────────────────────────
+const sameUrl = (a: string, b: string) => (a || '').split('?')[0] === (b || '').split('?')[0];
+
+// Has this posting already been seen (queued/applied/submitted)? Used to dedup
+// harvest results against both the drive queue and the real tracker.
+export function isJobKnown(url: string): boolean {
+  const db = getDatabase();
+  const u = (url || '').split('?')[0];
+  if (!u) return true;
+  const inQueue = db.prepare(`SELECT 1 FROM autopilot_jobs WHERE url LIKE ? LIMIT 1`).get(u + '%');
+  if (inQueue) return true;
+  const apps = db.prepare(`SELECT job_url FROM applications WHERE job_url IS NOT NULL`).all() as any[];
+  return apps.some((a) => sameUrl(a.job_url, url));
+}
+
+// Enqueue a scored posting (company/title/fit/source filled in up front).
+export function enqueuePosting(p: JobPosting, fitScore: number | null, fitReason: string | null): AutopilotJob | null {
+  const db = getDatabase();
+  const clean = (p.url || '').trim();
+  if (!clean || isJobKnown(clean)) return null;
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO autopilot_jobs (id, url, company, title, state, fit_score, fit_reason, source, created_at, updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, clean, p.company || null, p.title || null, 'queued', fitScore, fitReason, p.source || null, now, now);
+  return rowToJob(db.prepare('SELECT * FROM autopilot_jobs WHERE id=?').get(id));
+}
+
+// ── Saved searches ───────────────────────────────────────────────────────────
+function rowToSearch(r: any): SavedSearch {
+  return { id: r.id, board: r.board, query: r.query, location: r.location ?? '', enabled: r.enabled === 1, createdAt: r.created_at };
+}
+export function getSavedSearches(): SavedSearch[] {
+  return (getDatabase().prepare('SELECT * FROM saved_searches ORDER BY created_at ASC').all() as any[]).map(rowToSearch);
+}
+export function addSavedSearch(board: string, query: string, location: string): SavedSearch {
+  const db = getDatabase();
+  const id = randomUUID();
+  db.prepare('INSERT INTO saved_searches (id, board, query, location, enabled, created_at) VALUES (?,?,?,?,1,?)')
+    .run(id, board, query, location, new Date().toISOString());
+  return rowToSearch(db.prepare('SELECT * FROM saved_searches WHERE id=?').get(id));
+}
+export function setSavedSearchEnabled(id: string, enabled: boolean): void {
+  getDatabase().prepare('UPDATE saved_searches SET enabled=? WHERE id=?').run(enabled ? 1 : 0, id);
+}
+export function deleteSavedSearch(id: string): void {
+  getDatabase().prepare('DELETE FROM saved_searches WHERE id=?').run(id);
+}
+
+// ── Key/value settings ───────────────────────────────────────────────────────
+export function getSetting(key: string): string | null {
+  const r = getDatabase().prepare('SELECT value FROM app_settings WHERE key=?').get(key) as any;
+  return r ? r.value : null;
+}
+export function setSetting(key: string, value: string): void {
+  getDatabase().prepare('INSERT INTO app_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value);
+}
+
+const DEFAULT_SETTINGS: AutopilotSettings = { enabled: false, dailyTarget: 50, minFit: 60, runTime: '08:00' };
+export function getAutopilotSettings(): AutopilotSettings {
+  try {
+    const raw = getSetting('autopilot_settings');
+    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : { ...DEFAULT_SETTINGS };
+  } catch { return { ...DEFAULT_SETTINGS }; }
+}
+export function setAutopilotSettings(patch: Partial<AutopilotSettings>): AutopilotSettings {
+  const next = { ...getAutopilotSettings(), ...patch };
+  setSetting('autopilot_settings', JSON.stringify(next));
+  return next;
+}
+
+// Count jobs auto-applied (logged) today — for the daily-target cap.
+export function countLoggedToday(): number {
+  const since = new Date(); since.setHours(0, 0, 0, 0);
+  const r = getDatabase().prepare(`SELECT COUNT(*) n FROM autopilot_jobs WHERE state IN ('submitted','logged') AND updated_at >= ?`).get(since.toISOString()) as any;
+  return r ? r.n : 0;
 }

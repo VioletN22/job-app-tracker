@@ -250,13 +250,43 @@ export interface AutopilotJob {
   company: string | null;
   title: string | null;
   state: AutopilotJobState;
-  fitScore: number | null;       // reserved for Phase 2 fit scoring
+  fitScore: number | null;       // 0-100 fit vs your profile (Phase 2)
+  fitReason: string | null;      // one-line why, from the scorer
+  source: string | null;         // which board/search it came from
   filledCount: number;
   needsCount: number;            // open questions still blocking this job
   screenshotPath: string | null; // PNG of the filled draft for the review card
   error: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// A normalized job posting harvested from a board search, before it's enqueued.
+export interface JobPosting {
+  url: string;
+  title: string;
+  company: string;
+  location: string;
+  source: string;                // board id (linkedin | seek | indeed | ...)
+  snippet?: string;
+}
+
+// A reusable search the agent runs each harvest.
+export interface SavedSearch {
+  id: string;
+  board: string;                 // linkedin | seek | indeed
+  query: string;                 // role / keywords
+  location: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
+// Cockpit settings (the master toggle, daily target, schedule).
+export interface AutopilotSettings {
+  enabled: boolean;              // master ON/OFF for scheduled runs
+  dailyTarget: number;           // how many to auto-fill per day
+  minFit: number;                // skip jobs scoring below this (0-100)
+  runTime: string;               // "HH:MM" local time for the daily batch
 }
 
 // A deduplicated unknown question in the "Needs you" inbox.
