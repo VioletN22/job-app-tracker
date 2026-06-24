@@ -58,8 +58,18 @@ import {
   getCoverLetters,
   saveCoverLetter,
   deleteCoverLetter,
+  enqueueJob,
+  getAutopilotJobs,
+  deleteAutopilotJob,
+  clearFinishedJobs,
+  getOpenNeeds,
+  answerNeed,
 } from './database';
 import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
+import {
+  runDrive, stopDrive, approveJob, approveAll, isDriveRunning, DriveDeps,
+} from './autopilot/orchestrator';
+import { shutdown as shutdownDriveBrowser } from './autopilot/driver';
 import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot } from './autopilot-prompts';
 import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
 import { getFlowData } from './flow';
@@ -177,6 +187,34 @@ app.on('second-instance', () => {
   }
 });
 
+// Log a submitted application into the tracker (shared by the extension bridge and
+// the autonomous drive). Deduped by job URL.
+function logApplication(company: string, jobTitle: string, jobUrl: string): void {
+  if (jobUrl) {
+    const existing = getAllApplications().find((a) => a.job_url && a.job_url.split('?')[0] === jobUrl.split('?')[0]);
+    if (existing) return;
+  }
+  let workflow = getDefaultWorkflowForCompany(company);
+  if (!workflow) {
+    workflow = createWorkflow(company, `${company} Default Workflow`, ['applied', 'phone_screen', 'interview', 'offer'], true);
+  }
+  const data: ExtractedJobData = {
+    company, job_title: jobTitle, location: '', job_url: jobUrl, job_source: 'LinkedIn',
+    salary_min: null, salary_max: null, equity: null, benefits: null,
+    job_description: 'Applied via Autopilot — add details later.',
+    key_responsibilities: '', required_skills: '', nice_to_have_skills: '',
+    team_info: null, hiring_timeline: null, application_deadline: null,
+  };
+  const application = createApplication(data, workflow.id);
+  createStageHistory(application.id, 'applied', 'Applied via Autopilot');
+}
+
+// Push live drive status to the cockpit.
+const driveDeps: DriveDeps = {
+  onApply: logApplication,
+  emit: (status) => { try { mainWindow?.webContents.send('autopilot:drive:progress', status); } catch { /* window gone */ } },
+};
+
 app.whenReady().then(() => {
   log('[whenReady] uptime=' + process.uptime().toFixed(3) + ' isPackaged=' + app.isPackaged);
   isStarting = true;
@@ -188,26 +226,7 @@ app.whenReady().then(() => {
   try {
     initializeDatabase(); // idempotent — ensure the DB is ready for extension calls
     startAutopilotServer({
-      onApply: (company, jobTitle, jobUrl) => {
-        // dedup: don't log the same application twice (re-runs, multi-step pages)
-        if (jobUrl) {
-          const existing = getAllApplications().find((a) => a.job_url && a.job_url.split('?')[0] === jobUrl.split('?')[0]);
-          if (existing) return;
-        }
-        let workflow = getDefaultWorkflowForCompany(company);
-        if (!workflow) {
-          workflow = createWorkflow(company, `${company} Default Workflow`, ['applied', 'phone_screen', 'interview', 'offer'], true);
-        }
-        const data: ExtractedJobData = {
-          company, job_title: jobTitle, location: '', job_url: jobUrl, job_source: 'LinkedIn',
-          salary_min: null, salary_max: null, equity: null, benefits: null,
-          job_description: 'Applied via Autopilot — add details later.',
-          key_responsibilities: '', required_skills: '', nice_to_have_skills: '',
-          team_info: null, hiring_timeline: null, application_deadline: null,
-        };
-        const application = createApplication(data, workflow.id);
-        createStageHistory(application.id, 'applied', 'Applied via Autopilot extension');
-      },
+      onApply: logApplication,
       // Save a finished cover letter to disk as a PDF (default ~/Documents/work-stuff)
       // and into the in-app vault.
       saveCover: async ({ company, role, body }) => {
@@ -241,6 +260,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   closeDatabase();
+  try { shutdownDriveBrowser(); } catch { /* ignore */ }
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -475,6 +495,32 @@ ipcMain.handle('file:selectFile', async (_event) => {
   } catch (error) {
     throw new Error(`Failed to select file: ${error}`);
   }
+});
+
+// ── Autopilot autonomous-drive IPC (cockpit) ─────────────────────────────────
+ipcMain.handle('autopilot:drive:enqueue', async (_e, urls: string[]) => {
+  const added = (urls || []).map((u) => enqueueJob(u)).filter(Boolean);
+  return { added: added.length, jobs: getAutopilotJobs() };
+});
+ipcMain.handle('autopilot:drive:run', async () => { runDrive(driveDeps); return { ok: true }; });
+ipcMain.handle('autopilot:drive:stop', async () => { stopDrive(); return { ok: true }; });
+ipcMain.handle('autopilot:drive:getJobs', async () => getAutopilotJobs());
+ipcMain.handle('autopilot:drive:getNeeds', async () => getOpenNeeds());
+ipcMain.handle('autopilot:drive:answerNeed', async (_e, id: string, value: string) => {
+  const n = answerNeed(id, value);
+  return { ok: !!n, need: n };
+});
+ipcMain.handle('autopilot:drive:approve', async (_e, jobId: string) => approveJob(jobId, driveDeps));
+ipcMain.handle('autopilot:drive:approveAll', async () => { approveAll(driveDeps); return { ok: true }; });
+ipcMain.handle('autopilot:drive:deleteJob', async (_e, id: string) => { deleteAutopilotJob(id); return { ok: true }; });
+ipcMain.handle('autopilot:drive:clearFinished', async () => { clearFinishedJobs(); return { ok: true }; });
+ipcMain.handle('autopilot:drive:status', async () => ({ running: isDriveRunning(), jobs: getAutopilotJobs(), needs: getOpenNeeds() }));
+// Read a screenshot back as a data URL for the review card.
+ipcMain.handle('autopilot:drive:shot', async (_e, filePath: string) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    return 'data:image/png;base64,' + fs.readFileSync(filePath).toString('base64');
+  } catch { return null; }
 });
 
 // ── Autopilot IPC Handlers (answer bank / document locker / voice profile) ───

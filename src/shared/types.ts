@@ -229,3 +229,55 @@ export interface CoverLetter {
   createdAt: string;
   updatedAt: string;
 }
+
+// ── Autopilot autonomous drive ───────────────────────────────────────────────
+// The lifecycle a queued job moves through as the orchestrator drives it.
+export type AutopilotJobState =
+  | 'queued'      // waiting in the queue
+  | 'filling'     // driver is on the page filling fields
+  | 'needs_input' // filled what it could; ≥1 parked question blocks readiness
+  | 'ready'       // fully filled, screenshotted, waiting for your approval
+  | 'approved'    // you approved; about to submit
+  | 'submitting'  // driver is clicking Submit
+  | 'submitted'   // submit clicked
+  | 'logged'      // recorded into the tracker
+  | 'skipped'     // dropped (dupe / low fit)
+  | 'failed';     // login wall / captcha / no form — see `error`
+
+export interface AutopilotJob {
+  id: string;
+  url: string;
+  company: string | null;
+  title: string | null;
+  state: AutopilotJobState;
+  fitScore: number | null;       // reserved for Phase 2 fit scoring
+  filledCount: number;
+  needsCount: number;            // open questions still blocking this job
+  screenshotPath: string | null; // PNG of the filled draft for the review card
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// A deduplicated unknown question in the "Needs you" inbox.
+export interface AutopilotNeed {
+  id: string;
+  normLabel: string;             // normalized key used to dedupe across jobs
+  label: string;                 // the question as shown to you
+  kind: string;                  // text | textarea | select | radio | checkbox | file
+  options: string[];             // choices, for select/radio
+  hint: string | null;
+  jobCount: number;              // how many queued jobs this unblocks
+  status: 'open' | 'answered';
+  answer: string | null;
+  createdAt: string;
+  answeredAt: string | null;
+}
+
+// Live status pushed to the cockpit during a run.
+export interface DriveStatus {
+  running: boolean;
+  message: string;
+  currentJobId: string | null;
+  counts: Record<AutopilotJobState, number>;
+}

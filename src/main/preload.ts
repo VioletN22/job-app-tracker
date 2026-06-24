@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { JobApplication, Workflow, AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter } from '../shared/types';
+import { JobApplication, Workflow, AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter, AutopilotJob, AutopilotNeed, DriveStatus } from '../shared/types';
 
 // Define the API object
 const electronAPI = {
@@ -84,6 +84,31 @@ const electronAPI = {
       ipcRenderer.invoke('autopilot:generateCoverLetter', opts),
     refineCoverLetter: (opts: { company: string; role: string; body: string; feedback: string; remember?: boolean }): Promise<{ body: string }> =>
       ipcRenderer.invoke('autopilot:refineCoverLetter', opts),
+  },
+
+  // Autopilot autonomous drive (the cockpit)
+  drive: {
+    enqueue: (urls: string[]): Promise<{ added: number; jobs: AutopilotJob[] }> =>
+      ipcRenderer.invoke('autopilot:drive:enqueue', urls),
+    run: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:run'),
+    stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:stop'),
+    getJobs: (): Promise<AutopilotJob[]> => ipcRenderer.invoke('autopilot:drive:getJobs'),
+    getNeeds: (): Promise<AutopilotNeed[]> => ipcRenderer.invoke('autopilot:drive:getNeeds'),
+    answerNeed: (id: string, value: string): Promise<{ ok: boolean; need: AutopilotNeed | null }> =>
+      ipcRenderer.invoke('autopilot:drive:answerNeed', id, value),
+    approve: (jobId: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('autopilot:drive:approve', jobId),
+    approveAll: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:approveAll'),
+    deleteJob: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:deleteJob', id),
+    clearFinished: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:clearFinished'),
+    status: (): Promise<{ running: boolean; jobs: AutopilotJob[]; needs: AutopilotNeed[] }> =>
+      ipcRenderer.invoke('autopilot:drive:status'),
+    shot: (filePath: string): Promise<string | null> => ipcRenderer.invoke('autopilot:drive:shot', filePath),
+    onProgress: (cb: (status: DriveStatus) => void): (() => void) => {
+      const handler = (_e: unknown, status: DriveStatus) => cb(status);
+      ipcRenderer.on('autopilot:drive:progress', handler);
+      return () => ipcRenderer.removeListener('autopilot:drive:progress', handler);
+    },
   },
 
   // Quick add operation

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, FileText, Brain, MessageSquareHeart, Sparkles, Link2, PenLine, Lock, Wand2, Check, ThumbsUp, ThumbsDown } from 'lucide-react';
-import { AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter } from '../../shared/types';
+import { Plus, Trash2, FileText, Brain, MessageSquareHeart, Sparkles, Link2, PenLine, Lock, Wand2, Check, ThumbsUp, ThumbsDown, Play, Square, Send, Inbox, AlertTriangle, RotateCcw } from 'lucide-react';
+import { AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter, AutopilotJob, AutopilotNeed, DriveStatus } from '../../shared/types';
 
 const api = () => window.electronAPI.autopilot;
+const drive = () => window.electronAPI.drive;
 
 const card: React.CSSProperties = {
   border: '1px solid var(--ink, rgba(0,0,0,.12))',
@@ -55,6 +56,8 @@ export const AutopilotPage: React.FC = () => {
         browser extension.
       </p>
 
+      <CockpitSection />
+
       <AnswerBankSection answers={answers} reload={reload} />
       <DocumentLockerSection docs={docs} reload={reload} />
       <PortfolioSection links={links} reload={reload} />
@@ -63,6 +66,211 @@ export const AutopilotPage: React.FC = () => {
     </div>
   );
 };
+
+// ── Cockpit: the autonomous-drive control center ─────────────────────────────
+const STATE_LABEL: Record<string, string> = {
+  queued: 'Queued', filling: 'Filling', needs_input: 'Needs you', ready: 'Ready',
+  approved: 'Approving', submitting: 'Submitting', submitted: 'Submitted',
+  logged: 'Logged', skipped: 'Skipped', failed: 'Failed',
+};
+
+const CockpitSection: React.FC = () => {
+  const [jobs, setJobs] = useState<AutopilotJob[]>([]);
+  const [needs, setNeeds] = useState<AutopilotNeed[]>([]);
+  const [running, setRunning] = useState(false);
+  const [status, setStatus] = useState('Idle');
+  const [urls, setUrls] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async () => {
+    const s = await drive().status();
+    setJobs(s.jobs); setNeeds(s.needs); setRunning(s.running);
+  };
+  useEffect(() => {
+    refresh();
+    const off = drive().onProgress((st: DriveStatus) => {
+      setRunning(st.running); setStatus(st.message);
+      drive().getJobs().then(setJobs);
+      drive().getNeeds().then(setNeeds);
+    });
+    const t = setInterval(refresh, 4000);
+    return () => { off(); clearInterval(t); };
+  }, []);
+
+  const enqueue = async () => {
+    const list = urls.split(/[\s,]+/).map((u) => u.trim()).filter((u) => /^https?:\/\//.test(u));
+    if (!list.length) return;
+    setBusy(true);
+    await drive().enqueue(list);
+    setUrls('');
+    await refresh();
+    setBusy(false);
+  };
+  const run = async () => { await drive().run(); setRunning(true); };
+  const stop = async () => { await drive().stop(); };
+  const approve = async (id: string) => { setBusy(true); await drive().approve(id); await refresh(); setBusy(false); };
+  const approveAll = async () => { setBusy(true); await drive().approveAll(); await refresh(); setBusy(false); };
+
+  const count = (s: string) => jobs.filter((j) => j.state === s).length;
+  const ready = jobs.filter((j) => j.state === 'ready');
+  const needsJobs = jobs.filter((j) => j.state === 'needs_input');
+  const failed = jobs.filter((j) => j.state === 'failed');
+  const active = jobs.filter((j) => ['queued', 'filling', 'approved', 'submitting'].includes(j.state));
+  const done = jobs.filter((j) => ['submitted', 'logged'].includes(j.state));
+
+  const pipeline: [string, number][] = [
+    ['queued', count('queued')], ['filling', count('filling')],
+    ['needs_input', needsJobs.length], ['ready', ready.length],
+    ['logged', done.length], ['failed', failed.length],
+  ];
+
+  return (
+    <div style={{ ...card, borderColor: 'var(--accent, #f23a17)' }}>
+      <SectionHead icon={<Play size={16} />} title="Cockpit" count={jobs.length} />
+      <p style={{ fontSize: 12, opacity: 0.6, marginTop: 0 }}>
+        Drive applications autonomously across any board, then review before anything sends. It never auto-submits.
+      </p>
+
+      {/* run controls */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 12 }}>
+        <textarea
+          value={urls} onChange={(e) => setUrls(e.target.value)}
+          placeholder="Paste job URLs (one per line) — LinkedIn, Greenhouse, Lever, any ATS"
+          style={{ ...input, minHeight: 64, resize: 'vertical', fontFamily: 'inherit' }}
+        />
+        <button style={{ ...btn, whiteSpace: 'nowrap' }} onClick={enqueue} disabled={busy}>
+          <Plus size={14} /> Queue
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+        {running
+          ? <button style={{ ...btn, borderColor: 'var(--accent, #f23a17)', color: 'var(--accent, #f23a17)' }} onClick={stop}><Square size={13} /> Stop</button>
+          : <button style={{ ...btn, background: 'var(--accent, #f23a17)', color: '#fff', borderColor: 'var(--accent, #f23a17)' }} onClick={run} disabled={!active.length}><Play size={13} /> Run now</button>}
+        {ready.length > 0 && (
+          <button style={{ ...btn }} onClick={approveAll} disabled={busy}><Send size={13} /> Submit all ({ready.length})</button>
+        )}
+        <span style={{ fontSize: 12, opacity: 0.65, marginLeft: 4 }}>{running ? '● ' : ''}{status}</span>
+      </div>
+
+      {/* pipeline counts */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+        {pipeline.map(([s, n]) => (
+          <span key={s} style={{ ...tagChip, opacity: n ? 0.9 : 0.4, borderColor: s === 'ready' ? 'var(--accent, #f23a17)' : undefined }}>
+            {STATE_LABEL[s]} {n}
+          </span>
+        ))}
+      </div>
+
+      {/* Needs you inbox */}
+      {needs.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+            <Inbox size={14} /> Needs you ({needs.length})
+          </div>
+          {needs.map((n) => <NeedRow key={n.id} need={n} onAnswered={refresh} />)}
+        </div>
+      )}
+
+      {/* Ready to submit */}
+      {ready.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Ready to submit ({ready.length})</div>
+          {ready.map((j) => <ReadyCard key={j.id} job={j} onApprove={() => approve(j.id)} busy={busy} />)}
+        </div>
+      )}
+
+      {/* Active / queued */}
+      {active.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>In progress ({active.length})</div>
+          {active.map((j) => <JobRow key={j.id} job={j} />)}
+        </div>
+      )}
+
+      {/* Failed */}
+      {failed.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, marginBottom: 8, opacity: 0.8 }}>
+            <AlertTriangle size={14} /> Couldn't apply ({failed.length})
+          </div>
+          {failed.map((j) => <JobRow key={j.id} job={j} />)}
+        </div>
+      )}
+
+      {done.length > 0 && (
+        <button style={{ ...btn, fontSize: 12, opacity: 0.7 }} onClick={async () => { await drive().clearFinished(); refresh(); }}>
+          <RotateCcw size={12} /> Clear {done.length} submitted
+        </button>
+      )}
+
+      {jobs.length === 0 && (
+        <p style={{ fontSize: 12, opacity: 0.55, margin: '6px 0 0' }}>
+          Queue some job URLs, then hit Run. aplyd opens its own Chrome window (log in there once), fills each form
+          from your Answer bank, parks anything it doesn't know in <b>Needs you</b>, and stops at review so you approve
+          before anything sends.
+        </p>
+      )}
+    </div>
+  );
+};
+
+const NeedRow: React.FC<{ need: AutopilotNeed; onAnswered: () => void }> = ({ need, onAnswered }) => {
+  const [val, setVal] = useState('');
+  const save = async (v: string) => { if (!v.trim()) return; await drive().answerNeed(need.id, v.trim()); onAnswered(); };
+  return (
+    <div style={{ border: '1px solid var(--ink, rgba(0,0,0,.12))', borderRadius: 10, padding: 10, marginBottom: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{need.label}</div>
+      <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 8 }}>
+        affects {need.jobCount} queued job{need.jobCount === 1 ? '' : 's'}{need.hint ? ` · ${need.hint}` : ''} · remembered for next time
+      </div>
+      {need.options && need.options.length > 0 ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {need.options.map((o) => (
+            <button key={o} style={{ ...btn, fontSize: 12 }} onClick={() => save(o)}>{o}</button>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input style={input} value={val} onChange={(e) => setVal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') save(val); }} placeholder="Your answer" />
+          <button style={btn} onClick={() => save(val)}><Check size={13} /></button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ReadyCard: React.FC<{ job: AutopilotJob; onApprove: () => void; busy: boolean }> = ({ job, onApprove, busy }) => {
+  const [shot, setShot] = useState<string | null>(null);
+  useEffect(() => { if (job.screenshotPath) drive().shot(job.screenshotPath).then(setShot); }, [job.screenshotPath]);
+  return (
+    <div style={{ border: '1px solid var(--accent, #f23a17)', borderRadius: 10, padding: 10, marginBottom: 10, display: 'flex', gap: 12 }}>
+      {shot && <img src={shot} alt="" style={{ width: 120, height: 78, objectFit: 'cover', objectPosition: 'top', borderRadius: 6, border: '1px solid var(--ink, rgba(0,0,0,.15))' }} />}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>{job.company || 'Unknown'}</div>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>{job.title || 'Role'}</div>
+        <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>{job.filledCount} fields filled</div>
+        <a href={job.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, opacity: 0.5, textDecoration: 'none', color: 'inherit' }}>{job.url.slice(0, 54)}</a>
+      </div>
+      <button style={{ ...btn, alignSelf: 'center', background: 'var(--accent, #f23a17)', color: '#fff', borderColor: 'var(--accent, #f23a17)' }} onClick={onApprove} disabled={busy}>
+        <Send size={13} /> Submit
+      </button>
+    </div>
+  );
+};
+
+const JobRow: React.FC<{ job: AutopilotJob }> = ({ job }) => (
+  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--ink, rgba(0,0,0,.06))' }}>
+    <span style={{ ...tagChip, opacity: 0.8 }}>{STATE_LABEL[job.state] || job.state}</span>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {job.company || job.url.replace(/^https?:\/\//, '').slice(0, 50)}
+      </div>
+      {job.error && <div style={{ fontSize: 11, color: 'var(--accent, #c0392b)', opacity: 0.85 }}>{job.error}</div>}
+    </div>
+    <button style={{ ...btn, padding: 6 }} onClick={() => drive().deleteJob(job.id)}><Trash2 size={13} /></button>
+  </div>
+);
 
 // ── Portfolio links ──────────────────────────────────────────────────────────
 const PortfolioSection: React.FC<{ links: PortfolioLink[]; reload: () => void }> = ({ links, reload }) => {

@@ -20,6 +20,8 @@ import {
   VoiceNoteKind,
   PortfolioLink,
   CoverLetter,
+  AutopilotJob,
+  AutopilotNeed,
 } from '../shared/types';
 
 let db: DatabaseType.Database | null = null;
@@ -187,6 +189,42 @@ export function initializeDatabase(): void {
     )
   `);
 
+  // Autopilot autonomous drive: the job queue the orchestrator drives through its
+  // state machine (queued → filling → needs_input → ready → approved → submitted).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS autopilot_jobs (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      company TEXT,
+      title TEXT,
+      state TEXT NOT NULL DEFAULT 'queued',
+      fit_score INTEGER,
+      filled_count INTEGER NOT NULL DEFAULT 0,
+      needs_count INTEGER NOT NULL DEFAULT 0,
+      screenshot_path TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  // Deduplicated "Needs you" inbox: one row per unique normalized question across
+  // the whole queue. Answering writes through to answer_bank so it's permanent.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS autopilot_needs (
+      id TEXT PRIMARY KEY,
+      norm_label TEXT NOT NULL UNIQUE,
+      label TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      options_json TEXT,
+      hint TEXT,
+      job_count INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'open',
+      answer TEXT,
+      created_at TEXT NOT NULL,
+      answered_at TEXT
+    )
+  `);
+
   // Create indices for common queries
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_applications_company ON applications(company);
@@ -196,6 +234,8 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_guidance_docs_application_id ON guidance_docs(application_id);
     CREATE INDEX IF NOT EXISTS idx_guidance_docs_stage ON guidance_docs(stage);
     CREATE INDEX IF NOT EXISTS idx_attachments_application_id ON attachments(application_id);
+    CREATE INDEX IF NOT EXISTS idx_autopilot_jobs_state ON autopilot_jobs(state);
+    CREATE INDEX IF NOT EXISTS idx_autopilot_needs_status ON autopilot_needs(status);
   `);
 
   runMigrations();
@@ -1071,4 +1111,118 @@ export function saveCoverLetter(input: Partial<CoverLetter> & { company: string;
 
 export function deleteCoverLetter(id: string): void {
   getDatabase().prepare('DELETE FROM cover_letters WHERE id=?').run(id);
+}
+
+// ── Autopilot: autonomous-drive job queue ────────────────────────────────────
+function rowToJob(r: any): AutopilotJob {
+  return {
+    id: r.id, url: r.url, company: r.company ?? null, title: r.title ?? null,
+    state: r.state, fitScore: r.fit_score ?? null,
+    filledCount: r.filled_count ?? 0, needsCount: r.needs_count ?? 0,
+    screenshotPath: r.screenshot_path ?? null, error: r.error ?? null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+export function getAutopilotJobs(): AutopilotJob[] {
+  return (getDatabase().prepare('SELECT * FROM autopilot_jobs ORDER BY created_at ASC').all() as any[]).map(rowToJob);
+}
+
+export function getAutopilotJob(id: string): AutopilotJob | null {
+  const r = getDatabase().prepare('SELECT * FROM autopilot_jobs WHERE id=?').get(id);
+  return r ? rowToJob(r) : null;
+}
+
+// Add a URL to the queue, skipping duplicates already present in a live state.
+export function enqueueJob(url: string): AutopilotJob | null {
+  const db = getDatabase();
+  const clean = url.trim();
+  if (!clean) return null;
+  const existing = db.prepare(
+    `SELECT * FROM autopilot_jobs WHERE url=? AND state NOT IN ('submitted','logged','skipped','failed')`
+  ).get(clean);
+  if (existing) return rowToJob(existing);
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO autopilot_jobs (id, url, state, created_at, updated_at) VALUES (?,?,?,?,?)')
+    .run(id, clean, 'queued', now, now);
+  return rowToJob(db.prepare('SELECT * FROM autopilot_jobs WHERE id=?').get(id));
+}
+
+export function updateJob(id: string, patch: Partial<AutopilotJob>): void {
+  const db = getDatabase();
+  const map: Record<string, string> = {
+    url: 'url', company: 'company', title: 'title', state: 'state',
+    fitScore: 'fit_score', filledCount: 'filled_count', needsCount: 'needs_count',
+    screenshotPath: 'screenshot_path', error: 'error',
+  };
+  const sets: string[] = [];
+  const vals: any[] = [];
+  for (const [k, col] of Object.entries(map)) {
+    if (k in patch) { sets.push(`${col}=?`); vals.push((patch as any)[k]); }
+  }
+  sets.push('updated_at=?'); vals.push(new Date().toISOString());
+  vals.push(id);
+  db.prepare(`UPDATE autopilot_jobs SET ${sets.join(', ')} WHERE id=?`).run(...vals);
+}
+
+export function deleteAutopilotJob(id: string): void {
+  getDatabase().prepare('DELETE FROM autopilot_jobs WHERE id=?').run(id);
+}
+
+export function clearFinishedJobs(): void {
+  getDatabase().prepare(`DELETE FROM autopilot_jobs WHERE state IN ('submitted','logged','skipped')`).run();
+}
+
+// ── Autopilot: "Needs you" inbox (deduped by normalized label) ───────────────
+const normNeed = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+function rowToNeed(r: any): AutopilotNeed {
+  return {
+    id: r.id, normLabel: r.norm_label, label: r.label, kind: r.kind,
+    options: JSON.parse(r.options_json || '[]'), hint: r.hint ?? null,
+    jobCount: r.job_count ?? 1, status: r.status, answer: r.answer ?? null,
+    createdAt: r.created_at, answeredAt: r.answered_at ?? null,
+  };
+}
+
+export function getOpenNeeds(): AutopilotNeed[] {
+  return (getDatabase().prepare(`SELECT * FROM autopilot_needs WHERE status='open' ORDER BY job_count DESC, created_at ASC`).all() as any[]).map(rowToNeed);
+}
+
+// Returns an already-answered value if this question is known, else null.
+export function lookupAnsweredNeed(label: string): string | null {
+  const r = getDatabase().prepare(`SELECT answer FROM autopilot_needs WHERE norm_label=? AND status='answered'`).get(normNeed(label)) as any;
+  return r && r.answer ? r.answer : null;
+}
+
+// Record an unknown question. Dedups by normalized label; bumps the job counter
+// so the inbox can show "affects N queued jobs". Returns false if already open.
+export function upsertNeed(input: { label: string; kind: string; options?: string[]; hint?: string | null }): AutopilotNeed {
+  const db = getDatabase();
+  const nl = normNeed(input.label);
+  const existing = db.prepare('SELECT * FROM autopilot_needs WHERE norm_label=?').get(nl) as any;
+  if (existing) {
+    if (existing.status === 'open') {
+      db.prepare('UPDATE autopilot_needs SET job_count=job_count+1 WHERE id=?').run(existing.id);
+    }
+    return rowToNeed(db.prepare('SELECT * FROM autopilot_needs WHERE id=?').get(existing.id));
+  }
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO autopilot_needs (id, norm_label, label, kind, options_json, hint, job_count, status, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(id, nl, input.label, input.kind, JSON.stringify(input.options ?? []), input.hint ?? null, 1, 'open', now);
+  return rowToNeed(db.prepare('SELECT * FROM autopilot_needs WHERE id=?').get(id));
+}
+
+// Answer a parked question: mark it answered and write through to the permanent
+// answer bank so it fills instantly on every future job.
+export function answerNeed(id: string, value: string): AutopilotNeed | null {
+  const db = getDatabase();
+  const need = db.prepare('SELECT * FROM autopilot_needs WHERE id=?').get(id) as any;
+  if (!need) return null;
+  const now = new Date().toISOString();
+  db.prepare(`UPDATE autopilot_needs SET status='answered', answer=?, answered_at=? WHERE id=?`).run(value, now, id);
+  try { upsertAnswer({ label: need.label, value, patterns: [need.label] }); } catch { /* best effort */ }
+  return rowToNeed(db.prepare('SELECT * FROM autopilot_needs WHERE id=?').get(id));
 }
