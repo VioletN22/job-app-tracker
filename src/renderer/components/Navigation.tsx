@@ -24,11 +24,9 @@ export const Navigation: React.FC<NavigationProps> = ({ currentPage, onNavigate,
       borderRight: collapsed ? 'none' : undefined, overflow: 'hidden',
       transition: 'width .18s ease, min-width .18s ease',
     }}>
-      <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--ink)' }}>
-        <h1 style={{ fontSize: '21px', fontWeight: 700, letterSpacing: '-.02em', fontStyle: 'italic', margin: 0 }}>
-          Job Tracker
-        </h1>
-      </div>
+      {/* spacer aligns the nav under the top divider; the wordmark now lives in
+          the main header (next to the collapse toggle) so it isn't duplicated */}
+      <div style={{ height: 58, flex: 'none', borderBottom: '1px solid var(--ink)' }} />
 
       <nav style={{ padding: '24px', flex: 1 }}>
         {navItems.map((item) => (
