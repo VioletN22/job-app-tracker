@@ -90,7 +90,7 @@ textarea { resize: vertical; line-height: 1.6; }
 .spacer { flex: 1; }
 .nav { display: flex; gap: 2px; }
 .navlink { background: none; border: none; padding: 8px 14px; font-size: 11px; letter-spacing: .13em; text-transform: uppercase; color: var(--muted); position: relative; cursor: pointer; text-decoration: none; }
-.navlink:hover { color: var(--ink); }
+.navlink:hover { color: var(--ink); background: none; }
 .navlink.active { color: var(--ink); }
 .navlink.active::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: 2px; height: 2px; background: var(--accent); }
 
