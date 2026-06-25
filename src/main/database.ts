@@ -1274,10 +1274,23 @@ export function isJobKnown(url: string): boolean {
 }
 
 // Enqueue a scored posting (company/title/fit/source filled in up front).
+// Same role cross-posted under a different URL? Skip if we've already applied to
+// (or queued) the exact same company + title. Exact match keeps false-skips low.
+export function isSameRoleKnown(company: string, title: string): boolean {
+  const c = normNeed(company || ''); const t = normNeed(title || '');
+  if (!c || !t) return false;
+  const db = getDatabase();
+  const apps = db.prepare(`SELECT company, job_title FROM applications`).all() as any[];
+  if (apps.some((a) => normNeed(a.company) === c && normNeed(a.job_title) === t)) return true;
+  const jobs = db.prepare(`SELECT company, title FROM autopilot_jobs WHERE state NOT IN ('skipped','failed')`).all() as any[];
+  return jobs.some((j) => normNeed(j.company || '') === c && normNeed(j.title || '') === t);
+}
+
 export function enqueuePosting(p: JobPosting, fitScore: number | null, fitReason: string | null): AutopilotJob | null {
   const db = getDatabase();
   const clean = (p.url || '').trim();
   if (!clean || isJobKnown(clean)) return null;
+  if (isSameRoleKnown(p.company, p.title)) return null; // cross-posted duplicate
   const id = randomUUID();
   const now = new Date().toISOString();
   db.prepare(`INSERT INTO autopilot_jobs (id, url, company, title, state, fit_score, fit_reason, source, created_at, updated_at)
