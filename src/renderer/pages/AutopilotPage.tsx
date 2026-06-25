@@ -372,18 +372,35 @@ const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; r
   };
   return (
     <div style={{ width: 326, flex: 'none', borderLeft: '1px solid var(--line,rgba(0,0,0,.11))', background: '#f4f3ef', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <div style={{ padding: '12px 14px 6px' }}>
-        <h2 style={{ margin: 0, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted,#888)' }}>Core · what aplyd knows</h2>
+      {/* header — clear title hierarchy */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '13px 14px 11px' }}>
+        <div style={{ width: 26, height: 26, borderRadius: 7, background: 'var(--ink,#111)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>
+          <Brain size={15} />
+        </div>
+        <div style={{ lineHeight: 1.15 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: '-.01em' }}>Core</div>
+          <div style={{ fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '.09em', color: 'var(--muted,#888)' }}>What aplyd knows</div>
+        </div>
       </div>
-      {/* tab strip — wraps to fit, no horizontal scrolling */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '2px 10px 8px', borderBottom: '1px solid var(--line,rgba(0,0,0,.1))' }}>
-        {CORE_TABS.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 7, border: 'none', cursor: 'pointer',
-              color: tab === t.id ? '#fff' : 'var(--muted,#888)', background: tab === t.id ? 'var(--ink,#111)' : 'transparent' }}>
-            {t.label}{counts[t.id] != null && (counts[t.id] as number) > 0 && <span style={{ fontSize: 9, opacity: 0.8 }}>{counts[t.id]}</span>}
-          </button>
-        ))}
+      {/* tabs — contained segmented group, wraps to fit */}
+      <div style={{ padding: '0 10px 10px', borderBottom: '1px solid var(--line,rgba(0,0,0,.1))' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, padding: 4, background: 'rgba(0,0,0,.045)', borderRadius: 10 }}>
+          {CORE_TABS.map((t) => {
+            const on = tab === t.id;
+            const n = counts[t.id];
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '5px 9px', borderRadius: 7, border: 'none', cursor: 'pointer',
+                  color: on ? '#fff' : 'var(--muted,#888)', background: on ? 'var(--ink,#111)' : 'transparent', transition: 'background .12s, color .12s' }}>
+                {t.label}
+                {n != null && (n as number) > 0 && (
+                  <span style={{ fontSize: 9, fontWeight: 800, padding: '0 5px', borderRadius: 10, lineHeight: '15px', minWidth: 15, textAlign: 'center',
+                    background: on ? 'rgba(255,255,255,.25)' : 'rgba(0,0,0,.1)', color: on ? '#fff' : 'var(--muted,#888)' }}>{n}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
       {/* one panel at a time, scrolls internally */}
       <div style={{ overflow: 'auto', padding: '10px 12px 16px', flex: 1 }}>

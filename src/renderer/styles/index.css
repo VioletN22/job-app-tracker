@@ -85,7 +85,8 @@ textarea { resize: vertical; line-height: 1.6; }
 .content { flex: 1; overflow-y: auto; padding: 34px 24px; max-width: 1400px; margin: 0 auto; width: 100%; }
 
 /* Header */
-.header { border-bottom: 1px solid var(--ink); height: 58px; display: flex; align-items: center; padding: 0 24px; gap: 30px; }
+.header { border-bottom: 1px solid var(--ink); height: 58px; display: flex; align-items: center; padding: 0 24px 0 84px; gap: 30px; -webkit-app-region: drag; }
+.header button, .header input, .header a { -webkit-app-region: no-drag; }
 .wordmark { font-weight: 700; font-size: 21px; letter-spacing: -.02em; font-style: italic; }
 .spacer { flex: 1; }
 .nav { display: flex; gap: 2px; }
