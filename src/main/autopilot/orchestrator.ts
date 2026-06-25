@@ -233,38 +233,41 @@ export async function runDrive(deps: DriveDeps): Promise<void> {
 
 export function stopDrive(): void { cancelled = true; }
 
-// ── Harvest: source → dedupe → fit-score → enqueue top-N ─────────────────────
-const SCORE_BUDGET = 80; // cap Claude scoring calls per harvest
+// ── Harvest + concurrent drive ───────────────────────────────────────────────
+const SCORE_BUDGET = 80;   // cap Claude scoring calls per harvest
+const MAX_RUNS = 36;       // cap total (role × site) searches per harvest
+const HARVEST_SLOT = 2;    // hidden background view used while a run also drives
 
-export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueued: number }> {
+// How many more we can still queue/fill today (daily target minus in-flight + done).
+function remainingTarget(): number {
+  const s = getAutopilotSettings();
+  const inFlight = getAutopilotJobs().filter((j) => ['queued', 'needs_input', 'ready', 'filling'].includes(j.state)).length;
+  return Math.max(0, s.dailyTarget - countLoggedToday() - inFlight);
+}
+
+// Expand a search into related role titles (AI), so we cover similar roles, not
+// just the exact words. If you already listed several, we trust your list.
+async function expandTerms(query: string): Promise<string[]> {
+  const typed = query.split(',').map((t) => t.trim()).filter(Boolean);
+  const base = typed.length ? typed : [query.trim()].filter(Boolean);
+  if (!base.length) return [];
+  if (base.length >= 3) return base.slice(0, 5);
+  const out = await runClaudeCLI(relatedRolesPrompt(base.join(', '), 3), 18000).catch(() => '');
+  const all = [...base];
+  for (const r of parseRoles(out)) if (!all.some((x) => x.toLowerCase() === r.toLowerCase())) all.push(r);
+  return all.slice(0, 5);
+}
+
+// Search + score + enqueue PROGRESSIVELY on `slot`, so jobs become available to
+// the drive loop the moment they're found. Does NOT own the `running` flag.
+async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: number }> {
   const settings = getAutopilotSettings();
   const disabled = new Set(settings.disabledBoards || []);
   const enabledBoards = BOARDS.filter((b) => !disabled.has(b.id));
   const searches = getSavedSearches().filter((s) => s.enabled);
-  if (!searches.length) { emitStatus(deps, 'No searches set — tell autopilot what kind of job to look for.'); return { found: 0, enqueued: 0 }; }
-  if (!enabledBoards.length) { emitStatus(deps, 'All job sites are toggled off (Core › Rules).'); return { found: 0, enqueued: 0 }; }
-  await ensureBrowser();
+  if (!searches.length) { emitStatus(deps, 'No searches set — tell autopilot what kind of job to look for.'); return { enqueued: 0 }; }
+  if (!enabledBoards.length) { emitStatus(deps, 'All job sites are toggled off (Core › Rules).'); return { enqueued: 0 }; }
 
-  // 1. fan every search out across the enabled boards; dedupe by URL, drop knowns.
-  //    A search with a specific board only runs on that board; an "all" search
-  //    (the default) researches every enabled site for you.
-  // Expand each search into related role titles (AI), so we cover similar roles,
-  // not just the exact words. Typed roles (comma-separated) are kept; a few
-  // related ones are added. Capped per search.
-  async function expandTerms(query: string): Promise<string[]> {
-    const typed = query.split(',').map((t) => t.trim()).filter(Boolean);
-    const base = typed.length ? typed : [query.trim()].filter(Boolean);
-    if (!base.length) return [];
-    // If you already listed several roles, trust your list (no extra AI expansion).
-    if (base.length >= 3) return base.slice(0, 5);
-    const out = await runClaudeCLI(relatedRolesPrompt(base.join(', '), 3), 18000).catch(() => '');
-    const all = [...base];
-    for (const r of parseRoles(out)) if (!all.some((x) => x.toLowerCase() === r.toLowerCase())) all.push(r);
-    return all.slice(0, 5);
-  }
-
-  const byUrl = new Map<string, any>();
-  const MAX_RUNS = 36; // cap total (role × site) searches per harvest
   const runs: { board: ReturnType<typeof boardById>; s: typeof searches[number]; term: string }[] = [];
   for (const s of searches) {
     if (cancelled) break;
@@ -273,50 +276,59 @@ export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueue
     const targets = (s.board && s.board !== 'all') ? enabledBoards.filter((b) => b.id === s.board) : enabledBoards;
     for (const board of targets) for (const term of terms) runs.push({ board, s, term });
   }
-  if (runs.length > MAX_RUNS) emitStatus(deps, `Searching the top ${MAX_RUNS} role×site combinations…`);
   const total = Math.min(runs.length, MAX_RUNS);
-  let idx = 0;
+  const seen = new Set<string>();
+  let idx = 0, scored = 0, enqueued = 0;
   for (const { board, s, term } of runs.slice(0, MAX_RUNS)) {
     if (cancelled || !board) break;
+    if (remainingTarget() <= 0) { emitStatus(deps, 'Daily target reached — pausing search.'); break; }
     idx++;
-    emitStatus(deps, `Searching ${board.label}: ${term} (${idx}/${total}) · ${byUrl.size} found`);
+    emitStatus(deps, `Searching ${board.label}: ${term} (${idx}/${total}) · ${enqueued} queued`);
     let postings: any[] = [];
-    try { postings = await harvestSearch(board, term, s.location, s.maxAgeMinutes); } catch { postings = []; }
-    for (const p of postings) {
-      const key = (p.url || '').split('?')[0];
-      if (!key || byUrl.has(key) || isJobKnown(key)) continue;
-      byUrl.set(key, p);
+    try { postings = await harvestSearch(board, term, s.location, s.maxAgeMinutes, slot); } catch { postings = []; }
+    const fresh = postings.filter((p) => { const k = (p.url || '').split('?')[0]; if (!k || seen.has(k) || isJobKnown(k)) return false; seen.add(k); return true; });
+    // score + enqueue as we go so the drive loop can pick them up immediately
+    for (const p of fresh) {
+      if (cancelled || scored >= SCORE_BUDGET || remainingTarget() <= 0) break;
+      const out = await runClaudeCLI(fitScorePrompt(p), 25000).catch(() => '');
+      const { score, reason } = parseFitScore(out); scored++;
+      if (score >= settings.minFit) {
+        const job = enqueuePosting(p, score, reason);
+        if (job) { enqueued++; emitStatus(deps, `Queued ${job.company || p.title || 'role'} (fit ${score})`); }
+      }
     }
-    await sleep(rand(500, 1100));
+    await sleep(rand(350, 800));
   }
-  const fresh = [...byUrl.values()];
-  emitStatus(deps, `Found ${fresh.length} new postings, scoring…`);
-
-  // 2. fit-score (cap the number of Claude calls), keep those above minFit
-  const remainingToday = Math.max(0, settings.dailyTarget - countLoggedToday() - getAutopilotJobs().filter((j) => ['queued', 'needs_input', 'ready'].includes(j.state)).length);
-  const target = Math.max(0, remainingToday);
-  const scored: { p: any; score: number; reason: string }[] = [];
-  for (const p of fresh.slice(0, SCORE_BUDGET)) {
-    if (cancelled) break;
-    const out = await runClaudeCLI(fitScorePrompt(p), 30000).catch(() => '');
-    const { score, reason } = parseFitScore(out);
-    scored.push({ p, score, reason });
-  }
-  scored.sort((a, b) => b.score - a.score);
-
-  // 3. enqueue the best, above threshold, up to the remaining daily target
-  let enqueued = 0;
-  for (const s of scored) {
-    if (target && enqueued >= target) break;
-    if (s.score < settings.minFit) continue;
-    const job = enqueuePosting(s.p, s.score, s.reason);
-    if (job) enqueued++;
-  }
-  emitStatus(deps, `Queued ${enqueued} of ${fresh.length} (target ${target || '∞'})`);
-  return { found: fresh.length, enqueued };
+  emitStatus(deps, cancelled ? 'Search stopped' : `Search done · queued ${enqueued}`);
+  return { enqueued };
 }
 
-// Full cycle: harvest fresh jobs, then drive everything queued.
+// Find only (IPC): just search + queue, shown on the main view.
+export async function harvest(deps: DriveDeps): Promise<{ enqueued: number }> {
+  if (running) { emitStatus(deps, 'Already running…'); return { enqueued: 0 }; }
+  running = true; cancelled = false;
+  try { await ensureBrowser(); return await runHarvest(deps, 0); }
+  catch (e: any) { emitStatus(deps, 'Harvest error: ' + String(e?.message || e)); return { enqueued: 0 }; }
+  finally { running = false; emitStatus(deps, cancelled ? 'Stopped' : 'Idle'); }
+}
+
+// Continuously fill queued jobs on `slot`. While `isHarvesting()` is true, it
+// waits for more to appear instead of finishing — that's the parallelism.
+async function driveContinuous(deps: DriveDeps, slot: number, isHarvesting: () => boolean): Promise<void> {
+  while (!cancelled) {
+    const next = getAutopilotJobs().find((j) => j.state === 'queued');
+    if (next) {
+      const fresh = getAutopilotJob(next.id);
+      if (fresh) { await fillJob(fresh, deps, slot); await sleep(rand(2000, 5000)); }
+      continue;
+    }
+    if (!isHarvesting()) break;   // nothing queued + search finished → done
+    await sleep(1500);            // wait for harvest to enqueue more
+  }
+}
+
+// Full run: search in the BACKGROUND (hidden view) AND fill found jobs in the
+// visible workspace AT THE SAME TIME — same Claude brain, full context.
 export async function runFull(deps: DriveDeps): Promise<void> {
   if (running) { emitStatus(deps, 'Already running…'); return; }
   emitStatus(deps, 'Starting…');
@@ -329,13 +341,14 @@ export async function runFull(deps: DriveDeps): Promise<void> {
     return;
   }
 
-  if (hasSearches) {
-    running = true; cancelled = false;
-    try { await harvest(deps); }
-    catch (e: any) { emitStatus(deps, 'Harvest error: ' + String(e?.message || e)); }
-    finally { running = false; }
-  }
-  if (!cancelled) await runDrive(deps);
+  running = true; cancelled = false;
+  let harvesting = hasSearches;
+  const harvestP = hasSearches
+    ? runHarvest(deps, HARVEST_SLOT).catch((e: any) => { emitStatus(deps, 'Harvest error: ' + String(e?.message || e)); return { enqueued: 0 }; }).finally(() => { harvesting = false; })
+    : Promise.resolve({ enqueued: 0 });
+  const driveP = driveContinuous(deps, 0, () => harvesting);
+  try { await Promise.all([harvestP, driveP]); }
+  finally { running = false; emitStatus(deps, cancelled ? 'Stopped' : 'Run complete'); }
 }
 
 // Approve a ready job: reopen, ensure at the submit step, click Submit, log it.

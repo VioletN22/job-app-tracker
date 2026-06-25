@@ -168,10 +168,10 @@ export function boardById(id: string): Board | null {
 }
 
 // Run one board search and return normalized postings (best-effort, capped).
-export async function harvestSearch(board: Board, query: string, location: string, maxAgeMinutes = 0, max = 40): Promise<JobPosting[]> {
+export async function harvestSearch(board: Board, query: string, location: string, maxAgeMinutes = 0, slot = 0, max = 40): Promise<JobPosting[]> {
   await ensureBrowser();
   const url = board.buildUrl(query, location, maxAgeMinutes);
-  const tab = await openJob(url, noBridge);
+  const tab = await openJob(url, noBridge, slot);
   try {
     // nudge lazy lists to render more cards (kept short for speed)
     for (let i = 0; i < 2; i++) {
