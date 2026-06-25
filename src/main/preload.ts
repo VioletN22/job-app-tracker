@@ -141,7 +141,7 @@ const electronAPI = {
 
   // AI related-role suggestions for the search box
   roles: {
-    suggest: (text: string): Promise<string[]> => ipcRenderer.invoke('autopilot:roles:suggest', text),
+    suggest: (text: string, count?: number): Promise<string[]> => ipcRenderer.invoke('autopilot:roles:suggest', text, count),
   },
 
   // Workspace co-pilot chat (full-context Claude)

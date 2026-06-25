@@ -585,9 +585,10 @@ ipcMain.handle('autopilot:copilot:chat', async (_e, history: { role: string; con
 });
 
 // AI role suggestions for the search box (related titles given what they typed).
-ipcMain.handle('autopilot:roles:suggest', async (_e, text: string) => {
+ipcMain.handle('autopilot:roles:suggest', async (_e, text: string, count?: number) => {
   if (!text || text.trim().length < 2) return [];
-  const out = await runClaudeCLI(relatedRolesPrompt(text.trim(), 8), 20000).catch(() => '');
+  const n = Math.max(3, Math.min(16, count || 8));
+  const out = await runClaudeCLI(relatedRolesPrompt(text.trim(), n), 25000).catch(() => '');
   return parseRoles(out);
 });
 

@@ -178,7 +178,7 @@ textarea {
 }
 textarea:focus, input:focus { border-color: var(--ink); }
 
-input[type="checkbox"] { accent-color: var(--accent); }
+input[type="checkbox"], input[type="radio"] { width: auto; flex: none; accent-color: var(--accent); }
 
 ::placeholder { color: var(--muted); opacity: .7; }
 

@@ -742,6 +742,17 @@ const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void
     if (!parts.some((p) => p.toLowerCase() === s.toLowerCase())) parts.push(s);
     setQuery(parts.join(', '));
   };
+  const [suggesting, setSuggesting] = useState(false);
+  const suggestForMe = async () => {
+    setSuggesting(true);
+    try {
+      const res = await window.electronAPI.roles.suggest('a broad set of software and ecommerce roles that suit my background and seniority', 14);
+      const parts = query.split(',').map((x) => x.trim()).filter(Boolean);
+      for (const r of res) if (!parts.some((p) => p.toLowerCase() === r.toLowerCase())) parts.push(r);
+      setQuery(parts.join(', '));
+    } catch { /* ignore */ }
+    setSuggesting(false);
+  };
   const add = async () => {
     if (!query.trim()) return;
     // board 'all' = research every site you've toggled on (Core › Rules).
@@ -788,6 +799,9 @@ const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void
           )}
         </div>
       )}
+      <button style={{ ...btn, width: '100%', justifyContent: 'center', fontSize: 11.5, marginTop: 9 }} onClick={suggestForMe} disabled={suggesting}>
+        <Sparkles size={13} /> {suggesting ? 'Picking roles for you…' : 'Suggest roles for me'}
+      </button>
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
         <input style={{ ...input, flex: 1, minWidth: 150 }} placeholder='Role / keywords (e.g. "Backend engineer")' value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
         <input style={{ ...input, width: 120 }} placeholder="Location" value={loc} onChange={(e) => setLoc(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
