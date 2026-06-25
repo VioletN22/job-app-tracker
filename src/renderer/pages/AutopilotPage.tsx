@@ -89,6 +89,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
   const [settings, setSettings] = useState<AutopilotSettings | null>(null);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('Idle');
+  const [activity, setActivity] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [split, setSplit] = useState(false);
 
@@ -102,6 +103,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
     reloadDrive();
     const off = drive().onProgress((st: DriveStatus) => {
       setRunning(st.running); setStatus(st.message);
+      setActivity((a) => (a[a.length - 1] === st.message ? a : [...a, st.message]).slice(-7));
       drive().getJobs().then(setJobs); drive().getNeeds().then(setNeeds);
     });
     const t = window.setInterval(reloadDrive, 4000);
@@ -116,7 +118,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
   return (
     <div style={{ position: 'fixed', top: 58, left: 'var(--nav-w, 256px)', right: 0, bottom: 0, display: 'flex', background: 'var(--bg)', color: 'var(--ink)', transition: 'left .18s ease' }}>
       <SourcesRail jobs={jobs} needs={needs} searches={searches} selectedId={selectedId} onSelect={setSelectedId} reload={reloadDrive} />
-      <WorkspacePane jobs={jobs} needs={needs} settings={settings} running={running} status={status} split={split} onSplit={setSplitMode} reload={reloadDrive} selected={selected} />
+      <WorkspacePane jobs={jobs} needs={needs} settings={settings} running={running} status={status} activity={activity} split={split} onSplit={setSplitMode} reload={reloadDrive} selected={selected} />
       <CoreRail core={core} settings={settings} reloadDrive={reloadDrive} />
     </div>
   );
@@ -207,7 +209,7 @@ const SourcesRail: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; sear
 };
 
 // ── Workspace (center): live embedded browser + action bar ───────────────────
-const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; settings: AutopilotSettings | null; running: boolean; status: string; split: boolean; onSplit: (on: boolean) => void; reload: () => void; selected: AutopilotJob | null }> = ({ jobs, needs, running, status, split, onSplit, reload, selected }) => {
+const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; settings: AutopilotSettings | null; running: boolean; status: string; activity: string[]; split: boolean; onSplit: (on: boolean) => void; reload: () => void; selected: AutopilotJob | null }> = ({ jobs, needs, running, status, activity, split, onSplit, reload, selected }) => {
   const slot0 = useRef<HTMLDivElement>(null);
   const slot1 = useRef<HTMLDivElement>(null);
   useViewBounds(slot0, 0, true);
@@ -259,11 +261,22 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
           <button title="Only search + queue matching jobs — don't fill them yet" style={btn} onClick={harvest} disabled={running || starting}><Search size={13} /> Find only</button>
         </div>
         {(running || starting) && <div className="aplyd-bar" style={{ marginTop: 9 }} />}
-        {(status && status !== 'Idle') || starting ? (
-          <div style={{ fontSize: 12, color: 'var(--muted,#888)', marginTop: 8, lineHeight: 1.45 }}>
-            {starting && !running ? 'Starting…' : (running ? '● ' + status : status)}
+        {(running || starting) ? (
+          <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5 }}>
+            {starting && !running && <div style={{ color: 'var(--ink)' }}>Starting…</div>}
+            {activity.slice(-4).map((m, i, arr) => {
+              const latest = i === arr.length - 1;
+              return (
+                <div key={i} style={{ display: 'flex', gap: 6, color: latest ? 'var(--ink)' : 'var(--muted,#888)', opacity: latest ? 1 : 0.7 }}>
+                  <span style={{ color: 'var(--accent,#f23a17)', flex: 'none' }}>{latest ? '●' : '·'}</span>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m}</span>
+                </div>
+              );
+            })}
           </div>
-        ) : null}
+        ) : (status && status !== 'Idle' ? (
+          <div style={{ fontSize: 12, color: 'var(--muted,#888)', marginTop: 8, lineHeight: 1.45 }}>{status}</div>
+        ) : null)}
       </div>
 
       {/* live view mounts (+ co-pilot panel when open) */}
@@ -745,12 +758,17 @@ const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void
       </div>
       <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 8 }}>Describe the role once — autopilot searches every site you've enabled.</div>
       {searches.map((s) => (
-        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
-          <input type="checkbox" checked={s.enabled} onChange={(e) => { window.electronAPI.search.setEnabled(s.id, e.target.checked).then(reload); }} />
-          <span style={{ flex: 1, fontSize: 13 }}>{s.query}{s.location ? <span style={{ opacity: 0.55 }}> · {s.location}</span> : null}</span>
-          {s.board && s.board !== 'all' && <span style={{ ...tagChip, opacity: 0.6 }}>{BOARD_OPTS.find((b) => b.id === s.board)?.label || s.board}</span>}
-          {s.maxAgeMinutes > 0 && <span style={{ ...tagChip, opacity: 0.7 }}>≤ {ageLabel(s.maxAgeMinutes)}</span>}
-          <button style={{ ...btn, padding: 6 }} onClick={() => window.electronAPI.search.delete(s.id).then(reload)}><Trash2 size={13} /></button>
+        <div key={s.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 0', borderTop: '1px solid var(--ink, rgba(0,0,0,.07))' }}>
+          <input type="checkbox" checked={s.enabled} style={{ marginTop: 3, flex: 'none' }} onChange={(e) => { window.electronAPI.search.setEnabled(s.id, e.target.checked).then(reload); }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div title={s.query} style={{ fontSize: 13, lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{s.query}</div>
+            <div style={{ fontSize: 10.5, color: 'var(--muted,#888)', marginTop: 2 }}>
+              {s.location ? s.location + ' · ' : ''}
+              {s.board && s.board !== 'all' ? (BOARD_OPTS.find((b) => b.id === s.board)?.label || s.board) : 'all sites'}
+              {' · '}{s.maxAgeMinutes > 0 ? '≤ ' + ageLabel(s.maxAgeMinutes) : 'any time'}
+            </div>
+          </div>
+          <button style={{ ...btn, padding: 6, flex: 'none' }} onClick={() => window.electronAPI.search.delete(s.id).then(reload)}><Trash2 size={13} /></button>
         </div>
       ))}
       {(sugs.length > 0 || sugBusy) && (

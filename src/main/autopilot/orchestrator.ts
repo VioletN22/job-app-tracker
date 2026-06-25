@@ -255,14 +255,16 @@ export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueue
     const typed = query.split(',').map((t) => t.trim()).filter(Boolean);
     const base = typed.length ? typed : [query.trim()].filter(Boolean);
     if (!base.length) return [];
-    const out = await runClaudeCLI(relatedRolesPrompt(base.join(', '), 4), 20000).catch(() => '');
+    // If you already listed several roles, trust your list (no extra AI expansion).
+    if (base.length >= 3) return base.slice(0, 5);
+    const out = await runClaudeCLI(relatedRolesPrompt(base.join(', '), 3), 18000).catch(() => '');
     const all = [...base];
     for (const r of parseRoles(out)) if (!all.some((x) => x.toLowerCase() === r.toLowerCase())) all.push(r);
-    return all.slice(0, 6);
+    return all.slice(0, 5);
   }
 
   const byUrl = new Map<string, any>();
-  const MAX_RUNS = 60; // cap total (role × site) searches per harvest
+  const MAX_RUNS = 36; // cap total (role × site) searches per harvest
   const runs: { board: ReturnType<typeof boardById>; s: typeof searches[number]; term: string }[] = [];
   for (const s of searches) {
     if (cancelled) break;
@@ -272,9 +274,12 @@ export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueue
     for (const board of targets) for (const term of terms) runs.push({ board, s, term });
   }
   if (runs.length > MAX_RUNS) emitStatus(deps, `Searching the top ${MAX_RUNS} role×site combinations…`);
+  const total = Math.min(runs.length, MAX_RUNS);
+  let idx = 0;
   for (const { board, s, term } of runs.slice(0, MAX_RUNS)) {
     if (cancelled || !board) break;
-    emitStatus(deps, `Searching ${board.label}: ${term}`);
+    idx++;
+    emitStatus(deps, `Searching ${board.label}: ${term} (${idx}/${total}) · ${byUrl.size} found`);
     let postings: any[] = [];
     try { postings = await harvestSearch(board, term, s.location, s.maxAgeMinutes); } catch { postings = []; }
     for (const p of postings) {
@@ -282,7 +287,7 @@ export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueue
       if (!key || byUrl.has(key) || isJobKnown(key)) continue;
       byUrl.set(key, p);
     }
-    await sleep(rand(1500, 3500));
+    await sleep(rand(500, 1100));
   }
   const fresh = [...byUrl.values()];
   emitStatus(deps, `Found ${fresh.length} new postings, scoring…`);

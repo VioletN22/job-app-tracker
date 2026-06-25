@@ -173,10 +173,10 @@ export async function harvestSearch(board: Board, query: string, location: strin
   const url = board.buildUrl(query, location, maxAgeMinutes);
   const tab = await openJob(url, noBridge);
   try {
-    // nudge lazy lists to render more cards
-    for (let i = 0; i < 3; i++) {
+    // nudge lazy lists to render more cards (kept short for speed)
+    for (let i = 0; i < 2; i++) {
       await evalInTab(tab, 'window.scrollTo(0, document.body.scrollHeight)').catch(() => {});
-      await sleep(1200);
+      await sleep(650);
     }
     const items = await evalInTab(tab, scrapeExpr(board.scrape)).catch(() => []);
     const arr: JobPosting[] = Array.isArray(items) ? items : [];
