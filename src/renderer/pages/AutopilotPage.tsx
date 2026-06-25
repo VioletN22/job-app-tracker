@@ -635,7 +635,13 @@ const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void
 };
 
 // ── Structured profile (Core) ────────────────────────────────────────────────
-const PROFILE_FIELDS = ['Full name', 'Email', 'Phone', 'Location', 'Work authorization', 'Require visa sponsorship', 'Years of experience', 'Current title', 'LinkedIn', 'GitHub', 'Portfolio', 'Salary expectation', 'Notice period', 'Open to remote'];
+const PROFILE_FIELDS = ['Legal first name', 'Legal last name', 'Preferred name', 'Email', 'Phone', 'Location', 'Work authorization', 'Require visa sponsorship', 'Years of experience', 'Current title', 'LinkedIn', 'GitHub', 'Portfolio', 'Salary expectation', 'Notice period', 'Open to remote'];
+// Hints shown under the name fields so the distinction is obvious.
+const FIELD_HINT: Record<string, string> = {
+  'Legal first name': 'real/ID name used for official fields (e.g. Arkah Mynn)',
+  'Legal last name': 'real/ID surname (e.g. Nwe)',
+  'Preferred name': 'the name you go by, used only when a form asks for it (e.g. Violet)',
+};
 
 const ProfileSection: React.FC = () => {
   const [profile, setProfile] = useState<Record<string, string>>({});
@@ -655,9 +661,10 @@ const ProfileSection: React.FC = () => {
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
         {keys.map((k) => (
-          <label key={k} style={{ fontSize: 11, opacity: 0.85 }}>
+          <label key={k} style={{ fontSize: 11, opacity: 0.85, gridColumn: FIELD_HINT[k] ? '1 / -1' : undefined }}>
             <div style={{ marginBottom: 3, fontWeight: 600 }}>{k}</div>
             <input style={input} value={profile[k] || ''} onChange={(e) => setField(k, e.target.value)} onBlur={save} />
+            {FIELD_HINT[k] && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2 }}>{FIELD_HINT[k]}</div>}
           </label>
         ))}
       </div>

@@ -177,6 +177,10 @@ export function resolveFieldPrompt(opts: { label: string; type?: string; options
     `You are filling out a job-application form field on the user's behalf.\n` +
     `Field label: "${opts.label}"\nField type: ${opts.type || 'text'}\n${optionsLine}` +
     `Profile:\n${structuredProfileBlock()}\nKnown facts about the user:\n${factsBlock()}\nPortfolio:\n${portfolioBlock()}\n\n` +
+    `NAME HANDLING (important): the profile may list separate "Legal first name", "Legal last name", and "Preferred name".\n` +
+    `- Use the LEGAL name when the field asks for a legal name, full legal name, government/official name, real name, name as it appears on your passport/ID, OR a plain "First name"/"Given name"/"Last name"/"Surname"/"Full name" on an application form. For a single full-name field, combine legal first + legal last.\n` +
+    `- Use the PREFERRED name only when the field explicitly asks for a preferred name, display name, nickname, "name you go by", or "what should we call you".\n` +
+    `- When unsure on a job application, default to the legal name.\n\n` +
     `If you can confidently fill this from the known facts (or it's a standard field like a yes/no work-authorization the facts answer), respond ONLY with JSON: {"action":"fill","value":"..."}.\n` +
     `If filling it would require personal info NOT present in the facts, respond ONLY with JSON: {"action":"ask","hint":"<one-line plain description of what's being asked>"}.`
   );
@@ -229,7 +233,8 @@ export function profileSeedPrompt(): string {
   return (
     `Extract a structured job-application profile from the user's materials below.\n` +
     `Return ONLY JSON: a flat object whose keys are standard application fields and whose values are the user's answers. Use these keys where the materials support them: ` +
-    `"Full name", "Email", "Phone", "Location", "Work authorization", "Require visa sponsorship", "Years of experience", "Current title", "LinkedIn", "GitHub", "Portfolio", "Salary expectation", "Notice period", "Open to remote".\n` +
+    `"Legal first name", "Legal last name", "Preferred name", "Full name", "Email", "Phone", "Location", "Work authorization", "Require visa sponsorship", "Years of experience", "Current title", "LinkedIn", "GitHub", "Portfolio", "Salary expectation", "Notice period", "Open to remote".\n` +
+    `For names: "Legal first name"/"Legal last name" are the real/legal name as on official ID; "Preferred name" is the name the person goes by if different (e.g. a chosen first name). If the materials only show one name, set the legal fields and leave Preferred name out.\n` +
     `Omit any key you cannot fill from the materials (do not invent). Keep values short.\n\n` +
     (resume ? `RESUME:\n${resume.slice(0, 6000)}\n\n` : '') +
     `KNOWN FACTS:\n${factsBlock()}\n\nPORTFOLIO:\n${portfolioBlock()}`
