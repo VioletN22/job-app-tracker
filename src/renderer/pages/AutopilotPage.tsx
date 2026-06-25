@@ -632,52 +632,44 @@ const JobRow: React.FC<{ job: AutopilotJob }> = ({ job }) => (
 );
 
 const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void; onHarvest: () => void; running: boolean }> = ({ searches, reload, onHarvest, running }) => {
-  const [board, setBoard] = useState('linkedin');
   const [query, setQuery] = useState('');
   const [loc, setLoc] = useState('');
   const [age, setAge] = useState(0);
-  const boardGran = (id: string) => BOARD_OPTS.find((b) => b.id === id)?.gran;
   const add = async () => {
     if (!query.trim()) return;
-    await window.electronAPI.search.add(board, query.trim(), loc.trim(), age);
+    // board 'all' = research every site you've toggled on (Core › Rules).
+    await window.electronAPI.search.add('all', query.trim(), loc.trim(), age);
     setQuery(''); setLoc(''); reload();
   };
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
-        <Search size={14} /> Saved searches
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
+        <Search size={14} /> What I'm looking for
         {searches.some((s) => s.enabled) && (
-          <button style={{ ...btn, padding: '3px 8px', fontSize: 11, marginLeft: 'auto' }} onClick={onHarvest} disabled={running}>Harvest now</button>
+          <button style={{ ...btn, padding: '3px 8px', fontSize: 11, marginLeft: 'auto' }} onClick={onHarvest} disabled={running}>Find jobs now</button>
         )}
       </div>
+      <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 8 }}>Describe the role once — autopilot searches every site you've enabled.</div>
       {searches.map((s) => (
         <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
           <input type="checkbox" checked={s.enabled} onChange={(e) => { window.electronAPI.search.setEnabled(s.id, e.target.checked).then(reload); }} />
-          <span style={{ ...tagChip, opacity: 0.7 }}>{BOARD_OPTS.find((b) => b.id === s.board)?.label || s.board}</span>
           <span style={{ flex: 1, fontSize: 13 }}>{s.query}{s.location ? <span style={{ opacity: 0.55 }}> · {s.location}</span> : null}</span>
+          {s.board && s.board !== 'all' && <span style={{ ...tagChip, opacity: 0.6 }}>{BOARD_OPTS.find((b) => b.id === s.board)?.label || s.board}</span>}
           {s.maxAgeMinutes > 0 && <span style={{ ...tagChip, opacity: 0.7 }}>≤ {ageLabel(s.maxAgeMinutes)}</span>}
           <button style={{ ...btn, padding: 6 }} onClick={() => window.electronAPI.search.delete(s.id).then(reload)}><Trash2 size={13} /></button>
         </div>
       ))}
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-        <select value={board} onChange={(e) => setBoard(e.target.value)} style={{ ...input, width: 130 }}>
-          {BOARD_OPTS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
-        </select>
-        <input style={{ ...input, flex: 1, minWidth: 140 }} placeholder="Role / keywords" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
-        <input style={{ ...input, width: 130 }} placeholder="Location" value={loc} onChange={(e) => setLoc(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
-        <select value={age} onChange={(e) => setAge(Number(e.target.value))} style={{ ...input, width: 110 }} title="Only harvest jobs posted within this window">
+        <input style={{ ...input, flex: 1, minWidth: 150 }} placeholder='Role / keywords (e.g. "Backend engineer")' value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+        <input style={{ ...input, width: 120 }} placeholder="Location" value={loc} onChange={(e) => setLoc(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+        <select value={age} onChange={(e) => setAge(Number(e.target.value))} style={{ ...input, width: 108 }} title="Only find jobs posted within this window">
           {AGE_OPTS.map((a) => <option key={a.v} value={a.v}>{a.label}</option>)}
         </select>
-        <button style={btn} onClick={add}><Plus size={14} /></button>
+        <button style={btn} onClick={add}><Plus size={14} /> Add</button>
       </div>
-      {age > 0 && age < 1440 && boardGran(board) === 'day' && (
+      {age > 0 && age < 1440 && (
         <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
-          Note: {BOARD_OPTS.find((b) => b.id === board)?.label} only filters by day, so this rounds to "today, newest first." Only LinkedIn honours sub-day windows.
-        </div>
-      )}
-      {boardGran(board) === 'none' && age > 0 && (
-        <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
-          Note: {BOARD_OPTS.find((b) => b.id === board)?.label} has no date filter; results are simply newest-first.
+          Sub-day freshness is exact on LinkedIn; other sites round to "today, newest first."
         </div>
       )}
     </div>

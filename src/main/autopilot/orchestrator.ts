@@ -12,7 +12,7 @@ import {
   ensureBrowser, openJob, injectSource, evalInTab, screenshot, closeTab, setActiveSlots, Tab, BridgeMsg,
 } from './driver';
 import { INJECTED_SOURCE } from './injected';
-import { harvestSearch, boardById } from './sources';
+import { harvestSearch, boardById, BOARDS } from './sources';
 import { runClaudeCLI } from '../claude';
 import {
   resolveFieldPrompt, tailorAnswerPrompt, parseFieldAction, fitScorePrompt, parseFitScore,
@@ -238,16 +238,23 @@ const SCORE_BUDGET = 80; // cap Claude scoring calls per harvest
 export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueued: number }> {
   const settings = getAutopilotSettings();
   const disabled = new Set(settings.disabledBoards || []);
-  const searches = getSavedSearches().filter((s) => s.enabled && !disabled.has(s.board));
-  if (!searches.length) { emitStatus(deps, 'No active saved searches (check enabled searches + job-site toggles)'); return { found: 0, enqueued: 0 }; }
+  const enabledBoards = BOARDS.filter((b) => !disabled.has(b.id));
+  const searches = getSavedSearches().filter((s) => s.enabled);
+  if (!searches.length) { emitStatus(deps, 'No searches set — tell autopilot what kind of job to look for.'); return { found: 0, enqueued: 0 }; }
+  if (!enabledBoards.length) { emitStatus(deps, 'All job sites are toggled off (Core › Rules).'); return { found: 0, enqueued: 0 }; }
   await ensureBrowser();
 
-  // 1. harvest every enabled search, dedupe by URL, drop already-known jobs
+  // 1. fan every search out across the enabled boards; dedupe by URL, drop knowns.
+  //    A search with a specific board only runs on that board; an "all" search
+  //    (the default) researches every enabled site for you.
   const byUrl = new Map<string, any>();
+  const runs: { board: ReturnType<typeof boardById>; s: typeof searches[number] }[] = [];
   for (const s of searches) {
-    if (cancelled) break;
-    const board = boardById(s.board);
-    if (!board) continue;
+    const targets = (s.board && s.board !== 'all') ? enabledBoards.filter((b) => b.id === s.board) : enabledBoards;
+    for (const board of targets) runs.push({ board, s });
+  }
+  for (const { board, s } of runs) {
+    if (cancelled || !board) break;
     emitStatus(deps, `Searching ${board.label}: ${s.query}`);
     let postings: any[] = [];
     try { postings = await harvestSearch(board, s.query, s.location, s.maxAgeMinutes); } catch { postings = []; }
