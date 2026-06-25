@@ -255,6 +255,19 @@ export function parseProfileSeed(out: string): Record<string, string> {
   return {};
 }
 
+// The in-workspace co-pilot: same brain that does the applying, with full context
+// on the user + their live autopilot run, here to help refine searches + apply.
+export function copilotPrompt(stateContext: string, history: { role: string; content: string }[]): string {
+  const { likes, avoid } = voiceBlocks();
+  const convo = history.map((m) => (m.role === 'user' ? 'USER: ' : 'YOU: ') + m.content).join('\n\n');
+  return (
+    `You are aplyd's autopilot co-pilot — the same assistant that researches jobs and auto-fills applications for this user, now chatting with them inside the app. You ALWAYS have their full context (below). Help them decide what roles to search for, sharpen keywords/location/freshness, choose which job sites to use, understand why something failed, and improve their answers/voice. Be concise and concrete: give specific suggestions they can act on. You cannot click buttons yet, so when you recommend a change, tell them exactly what to set (e.g. 'add a search: "Backend engineer", Sydney, last 24h' or 'turn off Indeed in Core > Rules').\n\n` +
+    `USER PROFILE:\n${structuredProfileBlock()}\n\nKNOWN FACTS:\n${factsBlock()}\n\nPORTFOLIO:\n${portfolioBlock()}\n\nWRITING VOICE — likes:\n${likes}\nAVOID:\n${avoid}\n\n` +
+    `CURRENT AUTOPILOT STATE:\n${stateContext}\n\n` +
+    `CONVERSATION SO FAR:\n${convo}\n\nYOU:`
+  );
+}
+
 export function parseFieldAction(out: string): { action: 'fill' | 'ask'; value?: string; hint?: string } {
   try {
     const m = out.match(/\{[\s\S]*\}/);

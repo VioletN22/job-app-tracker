@@ -81,7 +81,7 @@ import {
 import {
   shutdown as shutdownDriveBrowser, attachHost, setViewBounds, setViewsVisible,
 } from './autopilot/driver';
-import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot, profileSeedPrompt, parseProfileSeed } from './autopilot-prompts';
+import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot, profileSeedPrompt, parseProfileSeed, copilotPrompt } from './autopilot-prompts';
 import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
 import { getFlowData } from './flow';
 import { getLicenseStatus, activateLicense, deactivateLicense } from './license';
@@ -566,6 +566,23 @@ ipcMain.handle('autopilot:view:setBounds', async (_e, slot: number, rect: { x: n
 ipcMain.handle('autopilot:view:setVisible', async (_e, visible: boolean) => { setViewsVisible(!!visible); return { ok: true }; });
 ipcMain.handle('autopilot:view:setSlots', async (_e, n: number) => { setSlotCount(n); return { slots: getSlotCount() }; });
 ipcMain.handle('autopilot:view:getSlots', async () => ({ slots: getSlotCount() }));
+
+// Workspace co-pilot: same brain, full live context, advises on searches + apply.
+ipcMain.handle('autopilot:copilot:chat', async (_e, history: { role: string; content: string }[]) => {
+  const jobs = getAutopilotJobs();
+  const by = (st: string) => jobs.filter((j) => j.state === st).length;
+  const searchLines = getSavedSearches().filter((s) => s.enabled)
+    .map((s) => `- "${s.query}"${s.location ? ' in ' + s.location : ''}${s.maxAgeMinutes ? ' (≤' + s.maxAgeMinutes + 'm old)' : ''}`).join('\n') || '(none set yet)';
+  const settings = getAutopilotSettings();
+  const allBoards = ['linkedin', 'indeed', 'seek', 'glassdoor', 'ziprecruiter', 'adzuna', 'jora', 'weworkremotely'];
+  const enabled = allBoards.filter((b) => !(settings.disabledBoards || []).includes(b)).join(', ') || '(none)';
+  const stateContext =
+    `Pipeline: ${by('queued')} queued, ${by('filling')} filling, ${by('needs_input')} need you, ${by('ready')} ready, ${by('submitted') + by('logged')} submitted, ${by('failed')} failed.\n` +
+    `Active searches:\n${searchLines}\n` +
+    `Enabled job sites: ${enabled}\nDaily target ${settings.dailyTarget}, min fit ${settings.minFit}.`;
+  const reply = await runClaudeCLI(copilotPrompt(stateContext, Array.isArray(history) ? history.slice(-16) : []), 90000).catch(() => '');
+  return { reply: reply.trim() || 'Sorry — I could not generate a reply just now.' };
+});
 
 ipcMain.handle('autopilot:drive:harvest', async () => { harvest(driveDeps); return { ok: true }; });
 ipcMain.handle('autopilot:drive:runFull', async () => { runFull(driveDeps); return { ok: true }; });

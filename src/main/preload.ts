@@ -139,6 +139,12 @@ const electronAPI = {
     getSlots: (): Promise<{ slots: number }> => ipcRenderer.invoke('autopilot:view:getSlots'),
   },
 
+  // Workspace co-pilot chat (full-context Claude)
+  copilot: {
+    chat: (history: { role: string; content: string }[]): Promise<{ reply: string }> =>
+      ipcRenderer.invoke('autopilot:copilot:chat', history),
+  },
+
   // Structured profile (Core)
   profile: {
     get: (): Promise<Record<string, string>> => ipcRenderer.invoke('autopilot:profile:get'),
