@@ -248,7 +248,9 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   const stop = async () => { setStarting(false); await drive().stop(); };
   const harvest = async () => { setStarting(true); try { await drive().harvest(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const fillQueue = async () => { setStarting(true); try { await drive().run(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
+  const retryFailed = async () => { setStarting(true); try { await drive().requeueFailed(); await drive().run(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const queuedCount = jobs.filter((j) => j.state === 'queued').length;
+  const failedCount = jobs.filter((j) => j.state === 'failed').length;
   const approve = async (id: string) => { setBusy(true); await drive().approve(id); await reload(); setBusy(false); };
   const approveAll = async () => { setBusy(true); await drive().approveAll(); await reload(); setBusy(false); };
   const answer = async (v: string) => { if (!firstNeed || !v.trim()) return; setBusy(true); await drive().answerNeed(firstNeed.id, v.trim()); setAns(''); await reload(); setBusy(false); };
@@ -274,6 +276,9 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
           <button title="Only search + queue matching jobs — don't fill them yet" style={btn} onClick={harvest} disabled={running || starting}><Search size={13} /> Find only</button>
           {!running && !starting && queuedCount > 0 && (
             <button title="Fill the applications already queued — no new search" style={btn} onClick={fillQueue}><Play size={13} /> Fill queued ({queuedCount})</button>
+          )}
+          {!running && !starting && failedCount > 0 && (
+            <button title="Reset jobs that failed (e.g. needed login) and try them again" style={btn} onClick={retryFailed}><RotateCcw size={13} /> Retry failed ({failedCount})</button>
           )}
         </div>
         {(running || starting) && <div className="aplyd-bar" style={{ marginTop: 9 }} />}

@@ -62,6 +62,7 @@ import {
   getAutopilotJobs,
   deleteAutopilotJob,
   clearFinishedJobs,
+  requeueFailed,
   getOpenNeeds,
   answerNeed,
   getSavedSearches,
@@ -551,6 +552,7 @@ ipcMain.handle('autopilot:drive:approve', async (_e, jobId: string) => approveJo
 ipcMain.handle('autopilot:drive:approveAll', async () => { approveAll(driveDeps); return { ok: true }; });
 ipcMain.handle('autopilot:drive:deleteJob', async (_e, id: string) => { deleteAutopilotJob(id); return { ok: true }; });
 ipcMain.handle('autopilot:drive:clearFinished', async () => { clearFinishedJobs(); return { ok: true }; });
+ipcMain.handle('autopilot:drive:requeueFailed', async () => ({ requeued: requeueFailed() }));
 ipcMain.handle('autopilot:drive:status', async () => ({ running: isDriveRunning(), jobs: getAutopilotJobs(), needs: getOpenNeeds() }));
 // Read a screenshot back as a data URL for the review card.
 ipcMain.handle('autopilot:drive:shot', async (_e, filePath: string) => {

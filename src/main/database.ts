@@ -1205,6 +1205,12 @@ export function clearFinishedJobs(): void {
   getDatabase().prepare(`DELETE FROM autopilot_jobs WHERE state IN ('submitted','logged','skipped')`).run();
 }
 
+// Reset failed jobs back to the queue so the drive loop retries them.
+export function requeueFailed(): number {
+  const r = getDatabase().prepare(`UPDATE autopilot_jobs SET state='queued', error=NULL, updated_at=? WHERE state='failed'`).run(new Date().toISOString());
+  return r.changes as number;
+}
+
 // ── Autopilot: "Needs you" inbox (deduped by normalized label) ───────────────
 const normNeed = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 

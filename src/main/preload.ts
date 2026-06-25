@@ -103,6 +103,7 @@ const electronAPI = {
     approveAll: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:approveAll'),
     deleteJob: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:deleteJob', id),
     clearFinished: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:clearFinished'),
+    requeueFailed: (): Promise<{ requeued: number }> => ipcRenderer.invoke('autopilot:drive:requeueFailed'),
     status: (): Promise<{ running: boolean; jobs: AutopilotJob[]; needs: AutopilotNeed[] }> =>
       ipcRenderer.invoke('autopilot:drive:status'),
     shot: (filePath: string): Promise<string | null> => ipcRenderer.invoke('autopilot:drive:shot', filePath),
