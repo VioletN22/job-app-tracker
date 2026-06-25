@@ -646,18 +646,27 @@ const FIELD_HINT: Record<string, string> = {
 const ProfileSection: React.FC = () => {
   const [profile, setProfile] = useState<Record<string, string>>({});
   const [seeding, setSeeding] = useState(false);
+  const [saved, setSaved] = useState(false);
   const load = async () => setProfile(await window.electronAPI.profile.get());
   useEffect(() => { load(); }, []);
   const setField = (k: string, v: string) => setProfile((p) => ({ ...p, [k]: v }));
-  const save = async () => { await window.electronAPI.profile.set(profile); };
-  const seed = async () => { setSeeding(true); const merged = await window.electronAPI.profile.seed(); setProfile(merged); setSeeding(false); };
+  const save = async () => { await window.electronAPI.profile.set(profile); setSaved(true); window.setTimeout(() => setSaved(false), 1400); };
+  // Persist whatever's typed FIRST so the seed merge (which keeps your values)
+  // never overrides an edit you hadn't clicked away from yet.
+  const seed = async () => {
+    setSeeding(true);
+    await window.electronAPI.profile.set(profile);
+    const merged = await window.electronAPI.profile.seed();
+    setProfile(merged); setSeeding(false);
+  };
   const keys = Array.from(new Set([...PROFILE_FIELDS, ...Object.keys(profile)]));
   return (
     <section style={card}>
       <SectionHead icon={<Brain size={16} />} title="Profile" count={Object.values(profile).filter(Boolean).length}
         action={<button style={btn} onClick={seed} disabled={seeding}><Wand2 size={14} /> {seeding ? 'Reading resume…' : 'Seed from resume'}</button>} />
       <p style={{ fontSize: 12, opacity: 0.6, marginTop: 0 }}>
-        The standard fields every ATS asks. Filled instantly during autopilot. Seed pulls what it can from your resume; edit anything.
+        Autosaves as you type. Filled instantly during autopilot. <b>Seed from resume</b> only fills blank fields — it never overrides what you've entered.
+        {saved && <span style={{ color: '#1f9d55', fontWeight: 700 }}> · Saved</span>}
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
         {keys.map((k) => (
