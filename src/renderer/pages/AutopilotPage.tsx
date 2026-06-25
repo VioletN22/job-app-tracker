@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, FileText, Brain, MessageSquareHeart, Sparkles, Link2, PenLine, Lock, Wand2, Check, ThumbsUp, ThumbsDown, Play, Square, Send, Inbox, AlertTriangle, RotateCcw, Search } from 'lucide-react';
 import { AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter, AutopilotJob, AutopilotNeed, DriveStatus } from '../../shared/types';
 
@@ -42,28 +42,292 @@ export const AutopilotPage: React.FC = () => {
   };
   useEffect(() => { reload(); }, []);
 
+  return <WorkspaceShell core={{ answers, docs, notes, links, letters, reload }} />;
+};
+
+// ═══════════════ Workspace cockpit (redesign) ═══════════════════════════════
+type CoreData = { answers: AnswerBankEntry[]; docs: LockerDocument[]; notes: VoiceNote[]; links: PortfolioLink[]; letters: CoverLetter[]; reload: () => void };
+
+const STATE_DOT: Record<string, string> = {
+  filling: '#c08a25', needs_input: '#c08a25', ready: '#f23a17', approved: '#f23a17',
+  submitting: '#f23a17', submitted: '#1f9d55', logged: '#1f9d55', queued: '#c7c3bb',
+  skipped: '#c7c3bb', failed: '#c0392b',
+};
+const SITE_LABEL: Record<string, string> = {
+  linkedin: 'LinkedIn', indeed: 'Indeed', seek: 'Seek', glassdoor: 'Glassdoor',
+  ziprecruiter: 'ZipRecruiter', adzuna: 'Adzuna', jora: 'Jora', weworkremotely: 'We Work Remotely', other: 'Other',
+};
+const FolderGlyph: React.FC = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} style={{ opacity: 0.7, flex: 'none' }}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </svg>
+);
+
+// Report a mount div's screen bounds to main so the native BrowserView tracks it.
+function useViewBounds(ref: React.RefObject<HTMLDivElement>, slot: number, active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    const el = ref.current;
+    if (!el) return;
+    const report = () => {
+      const r = el.getBoundingClientRect();
+      window.electronAPI.view.setBounds(slot, { x: r.left, y: r.top, width: r.width, height: r.height });
+    };
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    window.addEventListener('resize', report);
+    const t = window.setInterval(report, 700); // catch rail collapse / layout shifts
+    return () => { ro.disconnect(); window.removeEventListener('resize', report); clearInterval(t); };
+  }, [ref, slot, active]);
+}
+
+const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
+  const [jobs, setJobs] = useState<AutopilotJob[]>([]);
+  const [needs, setNeeds] = useState<AutopilotNeed[]>([]);
+  const [searches, setSearches] = useState<SavedSearch[]>([]);
+  const [settings, setSettings] = useState<AutopilotSettings | null>(null);
+  const [running, setRunning] = useState(false);
+  const [status, setStatus] = useState('Idle');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [split, setSplit] = useState(false);
+
+  const reloadDrive = async () => {
+    const s = await drive().status();
+    setJobs(s.jobs); setNeeds(s.needs); setRunning(s.running);
+    setSearches(await window.electronAPI.search.getAll());
+    setSettings(await window.electronAPI.settings.get());
+  };
+  useEffect(() => {
+    reloadDrive();
+    const off = drive().onProgress((st: DriveStatus) => {
+      setRunning(st.running); setStatus(st.message);
+      drive().getJobs().then(setJobs); drive().getNeeds().then(setNeeds);
+    });
+    const t = window.setInterval(reloadDrive, 4000);
+    window.electronAPI.view.setVisible(true);
+    window.electronAPI.view.getSlots().then((r) => setSplit(r.slots > 1));
+    return () => { off(); clearInterval(t); window.electronAPI.view.setVisible(false); };
+  }, []);
+
+  const selected = jobs.find((j) => j.id === selectedId) || null;
+  const setSplitMode = async (on: boolean) => { setSplit(on); await window.electronAPI.view.setSlots(on ? 2 : 1); };
+
   return (
-    <div style={{ padding: 32, maxWidth: 760, overflowY: 'auto', height: '100vh' }}>
-      <header style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Sparkles size={22} />
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.02em' }}>Autopilot</h1>
-      </header>
-      <p style={{ marginTop: 0, marginBottom: 24, fontSize: 13, opacity: 0.7, lineHeight: 1.5 }}>
-        Fills LinkedIn Easy-Apply forms for you and learns as it goes. Known fields fill instantly from your
-        <b> Answer bank</b>; new ones it asks once (then remembers). It picks the right file from your
-        <b> Document locker</b>, references your <b>Portfolio</b>, drafts <b>Cover letters</b> per role, and tailors
-        everything to your <b>Voice</b>. You always review and hit submit. It all lives locally and is shared with the
-        browser extension.
-      </p>
+    <div style={{ position: 'fixed', top: 58, left: 256, right: 0, bottom: 0, display: 'flex', background: 'var(--bg)', color: 'var(--ink)' }}>
+      <SourcesRail jobs={jobs} needs={needs} searches={searches} selectedId={selectedId} onSelect={setSelectedId} reload={reloadDrive} />
+      <WorkspacePane jobs={jobs} needs={needs} settings={settings} running={running} status={status} split={split} onSplit={setSplitMode} reload={reloadDrive} selected={selected} />
+      <CoreRail core={core} settings={settings} reloadDrive={reloadDrive} />
+    </div>
+  );
+};
 
-      <CockpitSection />
-      <ProfileSection />
+// ── Sources rail (left): smart status groups + by-site folders ───────────────
+const SourcesRail: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; searches: SavedSearch[]; selectedId: string | null; onSelect: (id: string) => void; reload: () => void }> = ({ jobs, needs, searches, selectedId, onSelect, reload }) => {
+  const [group, setGroup] = useState<'site' | 'status'>('site');
+  const [open, setOpen] = useState<Record<string, boolean>>({ linkedin: true });
+  const [showAdd, setShowAdd] = useState(false);
+  const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
 
-      <AnswerBankSection answers={answers} reload={reload} />
-      <DocumentLockerSection docs={docs} reload={reload} />
-      <PortfolioSection links={links} reload={reload} />
-      <CoverLetterSection letters={letters} reload={reload} />
-      <VoiceSection notes={notes} reload={reload} />
+  const Row: React.FC<{ j: AutopilotJob }> = ({ j }) => (
+    <div onClick={() => onSelect(j.id)} title={j.url}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 7, cursor: 'pointer', fontSize: 12,
+        background: selectedId === j.id ? 'rgba(242,58,23,.09)' : 'transparent',
+        boxShadow: selectedId === j.id ? 'inset 0 0 0 1px rgba(242,58,23,.32)' : 'none' }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATE_DOT[j.state] || '#ccc', flex: 'none' }} />
+      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(j.company || 'Unknown') + ' — ' + (j.title || 'Role')}</span>
+    </div>
+  );
+
+  const bySite: Record<string, AutopilotJob[]> = {};
+  jobs.forEach((j) => { const k = j.source || 'other'; (bySite[k] = bySite[k] || []).push(j); });
+  const statusGroups: [string, AutopilotJob[]][] = [
+    ['Filling', jobs.filter((j) => j.state === 'filling')],
+    ['Queued', jobs.filter((j) => j.state === 'queued')],
+    ['Submitted', jobs.filter((j) => ['submitted', 'logged'].includes(j.state))],
+    ['Failed', jobs.filter((j) => j.state === 'failed')],
+  ];
+  const needsCount = jobs.filter((j) => j.state === 'needs_input').length + needs.length;
+  const readyCount = jobs.filter((j) => j.state === 'ready').length;
+
+  const Smart: React.FC<{ label: string; color: string; count: number; jb: AutopilotJob[] }> = ({ label, color, count, jb }) => (
+    <div style={{ marginBottom: 2 }}>
+      <div onClick={() => toggle('smart:' + label)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 8, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />{label}
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--muted, #888)', background: 'rgba(0,0,0,.06)', borderRadius: 20, padding: '1px 7px', fontWeight: 700 }}>{count}</span>
+      </div>
+      {open['smart:' + label] && <div style={{ marginLeft: 14 }}>{jb.map((j) => <Row key={j.id} j={j} />)}</div>}
+    </div>
+  );
+
+  return (
+    <div style={{ width: 238, flex: 'none', borderRight: '1px solid var(--line, rgba(0,0,0,.11))', display: 'flex', flexDirection: 'column', background: '#faf9f6', minHeight: 0 }}>
+      <div style={{ padding: '12px 13px 6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted, #888)' }}>Applications</h2>
+          <span style={{ display: 'inline-flex', border: '1px solid var(--line, rgba(0,0,0,.15))', borderRadius: 7, overflow: 'hidden', fontSize: 10, fontWeight: 700 }}>
+            {(['site', 'status'] as const).map((g) => (
+              <b key={g} onClick={() => setGroup(g)} style={{ padding: '3px 8px', cursor: 'pointer', color: group === g ? '#fff' : 'var(--muted,#888)', background: group === g ? 'var(--ink,#111)' : 'transparent', textTransform: 'capitalize' }}>{g}</b>
+            ))}
+          </span>
+        </div>
+      </div>
+      <div style={{ padding: '0 9px 4px' }}>
+        <Smart label="Needs you" color="#c08a25" count={needsCount} jb={jobs.filter((j) => j.state === 'needs_input')} />
+        <Smart label="Ready to submit" color="#f23a17" count={readyCount} jb={jobs.filter((j) => j.state === 'ready')} />
+      </div>
+      <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted,#888)', padding: '10px 13px 4px' }}>By {group}</div>
+      <div style={{ overflow: 'auto', padding: '0 9px 8px', flex: 1 }}>
+        {group === 'site' ? Object.keys(bySite).sort().map((site) => (
+          <div key={site} style={{ marginBottom: 1 }}>
+            <div onClick={() => toggle(site)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 8, fontSize: 13, cursor: 'pointer', fontWeight: open[site] ? 700 : 400 }}>
+              <span style={{ width: 9, color: 'var(--muted,#888)', fontSize: 9 }}>{open[site] ? '▾' : '▸'}</span>
+              <FolderGlyph />{SITE_LABEL[site] || site}
+              <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--muted,#888)', background: 'rgba(0,0,0,.06)', borderRadius: 20, padding: '1px 7px' }}>{bySite[site].length}</span>
+            </div>
+            {open[site] && <div style={{ margin: '1px 0 6px 12px', borderLeft: '1px solid var(--line,rgba(0,0,0,.1))', paddingLeft: 6 }}>{bySite[site].map((j) => <Row key={j.id} j={j} />)}</div>}
+          </div>
+        )) : statusGroups.map(([label, jb]) => (
+          <div key={label} style={{ marginBottom: 1 }}>
+            <div onClick={() => toggle('st:' + label)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 8, fontSize: 13, cursor: 'pointer', fontWeight: open['st:' + label] ? 700 : 400 }}>
+              <span style={{ width: 9, color: 'var(--muted,#888)', fontSize: 9 }}>{open['st:' + label] ? '▾' : '▸'}</span>
+              {label}
+              <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--muted,#888)', background: 'rgba(0,0,0,.06)', borderRadius: 20, padding: '1px 7px' }}>{jb.length}</span>
+            </div>
+            {open['st:' + label] && <div style={{ margin: '1px 0 6px 12px', borderLeft: '1px solid var(--line,rgba(0,0,0,.1))', paddingLeft: 6 }}>{jb.map((j) => <Row key={j.id} j={j} />)}</div>}
+          </div>
+        ))}
+      </div>
+      <div style={{ borderTop: '1px solid var(--line,rgba(0,0,0,.1))', padding: 9 }}>
+        <button style={{ ...btn, width: '100%', justifyContent: 'center', fontSize: 12 }} onClick={() => setShowAdd((v) => !v)}><Search size={13} /> Saved searches</button>
+        {showAdd && <div style={{ marginTop: 8 }}><SavedSearchManager searches={searches} reload={reload} onHarvest={() => drive().harvest()} running={false} /></div>}
+      </div>
+    </div>
+  );
+};
+
+// ── Workspace (center): live embedded browser + action bar ───────────────────
+const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; settings: AutopilotSettings | null; running: boolean; status: string; split: boolean; onSplit: (on: boolean) => void; reload: () => void; selected: AutopilotJob | null }> = ({ jobs, needs, running, status, split, onSplit, reload, selected }) => {
+  const slot0 = useRef<HTMLDivElement>(null);
+  const slot1 = useRef<HTMLDivElement>(null);
+  useViewBounds(slot0, 0, true);
+  useViewBounds(slot1, 1, split);
+
+  const [busy, setBusy] = useState(false);
+  const [ans, setAns] = useState('');
+  const firstNeed = needs[0] || null;
+  const nextReady = jobs.find((j) => j.state === 'ready') || null;
+  const readyCount = jobs.filter((j) => j.state === 'ready').length;
+  const filling = jobs.find((j) => j.state === 'filling') || null;
+  const head = selected || filling || nextReady;
+
+  const run = async () => { await drive().runFull(); };
+  const stop = async () => { await drive().stop(); };
+  const harvest = async () => { await drive().harvest(); };
+  const approve = async (id: string) => { setBusy(true); await drive().approve(id); await reload(); setBusy(false); };
+  const approveAll = async () => { setBusy(true); await drive().approveAll(); await reload(); setBusy(false); };
+  const answer = async (v: string) => { if (!firstNeed || !v.trim()) return; setBusy(true); await drive().answerNeed(firstNeed.id, v.trim()); setAns(''); await reload(); setBusy(false); };
+
+  const Mount: React.FC<{ r: React.RefObject<HTMLDivElement>; tint?: string }> = ({ r, tint }) => (
+    <div ref={r} style={{ flex: 1, margin: 12, border: '1px solid var(--line,rgba(0,0,0,.12))', borderTop: tint ? `3px solid ${tint}` : '1px solid var(--line,rgba(0,0,0,.12))', borderRadius: 10, background: '#fff', minWidth: 0, position: 'relative', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted,#aaa)', fontSize: 12, textAlign: 'center', padding: 20 }}>
+        The live application renders here.<br />Run autopilot, or log in when prompted.
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#faf9f6' }}>
+      {/* header */}
+      <div style={{ padding: '11px 16px', borderBottom: '1px solid var(--line,rgba(0,0,0,.11))', background: 'var(--bg,#fff)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ fontSize: 12, color: 'var(--muted,#888)', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {head ? <>{SITE_LABEL[head.source || 'other'] || head.source} <span style={{ opacity: .5 }}>›</span> {head.title || 'Role'} <span style={{ opacity: .5 }}>›</span> <b style={{ color: 'var(--ink,#111)' }}>{head.company || 'Unknown'}</b></> : 'Autopilot workspace'}
+          </div>
+          {head?.fitScore != null && <span style={{ ...tagChip, borderColor: 'rgba(31,157,85,.5)', color: '#1f9d55' }}>fit {head.fitScore}</span>}
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', border: '1px solid var(--line,rgba(0,0,0,.15))', borderRadius: 7, overflow: 'hidden' }}>
+            <b onClick={() => onSplit(false)} style={{ padding: '4px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer', color: !split ? '#fff' : 'var(--muted,#888)', background: !split ? 'var(--ink,#111)' : 'transparent' }}>Single</b>
+            <b onClick={() => onSplit(true)} style={{ padding: '4px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer', color: split ? '#fff' : 'var(--muted,#888)', background: split ? 'var(--ink,#111)' : 'transparent' }}>Split</b>
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
+          {running
+            ? <button style={{ ...btn, borderColor: 'var(--accent,#f23a17)', color: 'var(--accent,#f23a17)' }} onClick={stop}><Square size={12} /> Stop</button>
+            : <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={run}><Play size={12} /> Run</button>}
+          <button style={btn} onClick={harvest}><Search size={13} /> Harvest</button>
+          <span style={{ fontSize: 12, color: 'var(--muted,#888)', marginLeft: 4 }}>{running ? '● ' : ''}{status}</span>
+        </div>
+      </div>
+
+      {/* live view mounts */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        <Mount r={slot0} tint={split ? '#f23a17' : undefined} />
+        {split && <Mount r={slot1} tint="#1f78c8" />}
+      </div>
+
+      {/* action bar */}
+      <div style={{ borderTop: '1px solid var(--line,rgba(0,0,0,.11))', background: 'var(--bg,#fff)', padding: '11px 16px', display: 'flex', alignItems: 'center', gap: 10, minHeight: 56 }}>
+        {firstNeed ? (
+          <>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{firstNeed.label}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted,#888)' }}>affects {firstNeed.jobCount} job{firstNeed.jobCount === 1 ? '' : 's'} · remembered</div>
+            </div>
+            {firstNeed.options && firstNeed.options.length ? firstNeed.options.map((o) => (
+              <button key={o} style={btn} disabled={busy} onClick={() => answer(o)}>{o}</button>
+            )) : (
+              <>
+                <input style={{ ...input, width: 220 }} value={ans} onChange={(e) => setAns(e.target.value)} placeholder="Your answer" onKeyDown={(e) => { if (e.key === 'Enter') answer(ans); }} />
+                <button style={{ ...btn, background: 'var(--ink,#111)', color: '#fff', borderColor: 'var(--ink,#111)' }} disabled={busy} onClick={() => answer(ans)}><Check size={13} /> Save</button>
+              </>
+            )}
+          </>
+        ) : nextReady ? (
+          <>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{nextReady.company || 'Unknown'} — {nextReady.title || 'Role'}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted,#888)' }}>{nextReady.filledCount} fields filled · ready to submit</div>
+            </div>
+            {readyCount > 1 && <button style={btn} disabled={busy} onClick={approveAll}><Send size={13} /> Approve all ({readyCount})</button>}
+            <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} disabled={busy} onClick={() => approve(nextReady.id)}><Send size={13} /> Approve &amp; submit</button>
+          </>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--muted,#888)' }}>{running ? status : 'Nothing waiting on you. Run autopilot or add a saved search.'}</div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ── Core rail (right): everything aplyd knows ────────────────────────────────
+const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; reloadDrive: () => void }> = ({ core, settings, reloadDrive }) => {
+  const saveSettings = async (patch: Partial<AutopilotSettings>) => { await window.electronAPI.settings.set(patch); reloadDrive(); };
+  return (
+    <div style={{ width: 326, flex: 'none', borderLeft: '1px solid var(--line,rgba(0,0,0,.11))', background: '#f4f3ef', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ padding: '12px 14px 4px' }}>
+        <h2 style={{ margin: 0, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted,#888)' }}>Core · what aplyd knows</h2>
+      </div>
+      <div style={{ overflow: 'auto', padding: '6px 12px 16px' }}>
+        {settings && (
+          <div style={{ ...card, marginBottom: 12 }}>
+            <SectionHead icon={<Brain size={15} />} title="Run rules" count={settings.dailyTarget} />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700, margin: '6px 0', cursor: 'pointer' }}>
+              <input type="checkbox" checked={settings.enabled} onChange={(e) => saveSettings({ enabled: e.target.checked })} /> Daily auto-run
+            </label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--muted,#888)' }}>
+              <label>at <input type="time" value={settings.runTime} onChange={(e) => saveSettings({ runTime: e.target.value })} style={{ ...input, width: 96, display: 'inline-block', padding: '4px 6px' }} /></label>
+              <label>target <input type="number" min={1} max={200} value={settings.dailyTarget} onChange={(e) => saveSettings({ dailyTarget: Number(e.target.value) })} style={{ ...input, width: 56, display: 'inline-block', padding: '4px 6px' }} /></label>
+              <label>min fit <input type="number" min={0} max={100} value={settings.minFit} onChange={(e) => saveSettings({ minFit: Number(e.target.value) })} style={{ ...input, width: 52, display: 'inline-block', padding: '4px 6px' }} /></label>
+            </div>
+          </div>
+        )}
+        <ProfileSection />
+        <AnswerBankSection answers={core.answers} reload={core.reload} />
+        <DocumentLockerSection docs={core.docs} reload={core.reload} />
+        <PortfolioSection links={core.links} reload={core.reload} />
+        <CoverLetterSection letters={core.letters} reload={core.reload} />
+        <VoiceSection notes={core.notes} reload={core.reload} />
+      </div>
     </div>
   );
 };

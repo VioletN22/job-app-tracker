@@ -130,6 +130,15 @@ const electronAPI = {
       ipcRenderer.invoke('autopilot:settings:set', patch),
   },
 
+  // Embedded autopilot browser views (the live workspace)
+  view: {
+    setBounds: (slot: number, rect: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('autopilot:view:setBounds', slot, rect),
+    setVisible: (visible: boolean) => ipcRenderer.invoke('autopilot:view:setVisible', visible),
+    setSlots: (n: number): Promise<{ slots: number }> => ipcRenderer.invoke('autopilot:view:setSlots', n),
+    getSlots: (): Promise<{ slots: number }> => ipcRenderer.invoke('autopilot:view:getSlots'),
+  },
+
   // Structured profile (Core)
   profile: {
     get: (): Promise<Record<string, string>> => ipcRenderer.invoke('autopilot:profile:get'),

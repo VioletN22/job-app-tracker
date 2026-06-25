@@ -75,9 +75,12 @@ import {
 } from './database';
 import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
 import {
-  runDrive, runFull, harvest, stopDrive, approveJob, approveAll, isDriveRunning, DriveDeps,
+  runDrive, runFull, harvest, stopDrive, approveJob, approveAll, isDriveRunning,
+  setSlotCount, getSlotCount, DriveDeps,
 } from './autopilot/orchestrator';
-import { shutdown as shutdownDriveBrowser } from './autopilot/driver';
+import {
+  shutdown as shutdownDriveBrowser, attachHost, setViewBounds, setViewsVisible,
+} from './autopilot/driver';
 import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot, profileSeedPrompt, parseProfileSeed } from './autopilot-prompts';
 import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
 import { getFlowData } from './flow';
@@ -129,6 +132,9 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
+
+  // Let the autopilot drive views attach to + position themselves inside this window.
+  attachHost(mainWindow);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) shell.openExternal(url);
@@ -555,6 +561,12 @@ ipcMain.handle('autopilot:drive:shot', async (_e, filePath: string) => {
 });
 
 // ── Autopilot Phase 2/3: sourcing, fit, saved searches, settings, profile ────
+// Embedded-browser view control (renderer reports the workspace pane bounds).
+ipcMain.handle('autopilot:view:setBounds', async (_e, slot: number, rect: { x: number; y: number; width: number; height: number }) => { setViewBounds(slot, rect); return { ok: true }; });
+ipcMain.handle('autopilot:view:setVisible', async (_e, visible: boolean) => { setViewsVisible(!!visible); return { ok: true }; });
+ipcMain.handle('autopilot:view:setSlots', async (_e, n: number) => { setSlotCount(n); return { slots: getSlotCount() }; });
+ipcMain.handle('autopilot:view:getSlots', async () => ({ slots: getSlotCount() }));
+
 ipcMain.handle('autopilot:drive:harvest', async () => { harvest(driveDeps); return { ok: true }; });
 ipcMain.handle('autopilot:drive:runFull', async () => { runFull(driveDeps); return { ok: true }; });
 ipcMain.handle('autopilot:search:getAll', async () => getSavedSearches());

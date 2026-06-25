@@ -1,93 +1,101 @@
-// Autopilot drive engine — the agent's "hands", running INSIDE aplyd.
+// Autopilot drive engine — the agent's "hands", embedded INSIDE the aplyd window.
 //
-// Instead of spawning an external Chrome, we drive a real Electron BrowserWindow
-// (its own persistent session partition, so you log into LinkedIn/Seek/etc. ONCE
-// inside aplyd and it sticks). Page work uses webContents.executeJavaScript /
-// capturePage / loadURL; the only thing those can't do is let the page call back
-// into Node mid-fill, so we use the webContents debugger purely to expose one
-// binding (__aplydBind) for the page->Node bridge. No external browser, no
-// credentials stored.
-import { BrowserWindow } from 'electron';
+// Each run "slot" is an Electron BrowserView attached to the main window and
+// positioned over the workspace pane the renderer reports. The live apply page
+// renders right there in the app, so login/captcha/extra-info happen inline.
+// All slots share one persistent session partition (persist:autopilot) so you
+// log in once. Slot 0 = single mode; slots 0..2 = split (parallel) mode.
+//
+// Page work uses webContents.executeJavaScript / capturePage / loadURL; the
+// webContents debugger is used only to expose the __aplydBind page->Node bridge.
+import { BrowserView, BrowserWindow, app } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import { app } from 'electron';
 
-export interface Tab { wc: Electron.WebContents; }
+export interface Tab { wc: Electron.WebContents; slot: number; }
 export interface BridgeMsg { id: string; path: string; method: string; body: any; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const MAX_SLOTS = 3;
 
-let driveWin: BrowserWindow | null = null;
-let attached = false;
-let currentBridge: (m: BridgeMsg) => Promise<any> = async () => ({ ok: false });
+interface Slot {
+  view: BrowserView;
+  bounds: { x: number; y: number; width: number; height: number };
+  bridge: (m: BridgeMsg) => Promise<any>;
+}
 
-// Create (once) the in-app browser window the agent drives. Visible so you can
-// watch it and log in; persistent partition so the login survives restarts.
-export async function ensureBrowser(): Promise<void> {
-  if (driveWin && !driveWin.isDestroyed()) return;
-  driveWin = new BrowserWindow({
-    width: 1200, height: 900, show: true,
-    title: 'aplyd autopilot',
+let hostWin: BrowserWindow | null = null;
+let viewsVisible = true;
+const slots: (Slot | null)[] = [null, null, null];
+
+// Called from createWindow so the views can attach to the real app window.
+export function attachHost(win: BrowserWindow): void { hostWin = win; }
+
+const ZERO = { x: 0, y: 0, width: 0, height: 0 };
+
+function makeSlot(index: number): Slot {
+  const view = new BrowserView({
     webPreferences: {
-      partition: 'persist:autopilot', // dedicated, persistent cookie jar inside aplyd
+      partition: 'persist:autopilot', // shared, persistent login across slots
       contextIsolation: true,
       sandbox: false,
       nodeIntegration: false,
     },
   });
-  driveWin.on('closed', () => { driveWin = null; attached = false; });
-
-  const wc = driveWin.webContents;
+  const slot: Slot = { view, bounds: { ...ZERO }, bridge: async () => ({ ok: false }) };
+  const wc = view.webContents;
   try {
     wc.debugger.attach('1.3');
-    attached = true;
     wc.debugger.on('message', async (_e, method, params) => {
       if (method !== 'Runtime.bindingCalled' || params.name !== '__aplydBind') return;
       let msg: BridgeMsg;
       try { msg = JSON.parse(params.payload); } catch { return; }
       let result: any = { ok: false };
-      try { result = await currentBridge(msg); } catch (err) { result = { ok: false, error: String(err) }; }
-      const expr = `window.__aplydResolve(${JSON.stringify(msg.id)}, ${JSON.stringify(result)})`;
-      try { await wc.executeJavaScript(expr, true); } catch { /* page navigated away */ }
+      try { result = await slot.bridge(msg); } catch (err) { result = { ok: false, error: String(err) }; }
+      try { await wc.executeJavaScript(`window.__aplydResolve(${JSON.stringify(msg.id)}, ${JSON.stringify(result)})`, true); } catch { /* navigated */ }
     });
-    await wc.debugger.sendCommand('Runtime.enable');
-  } catch {
-    attached = false; // debugger may already be attached; bridge still best-effort
-  }
-  try { await wc.loadURL('about:blank'); } catch { /* ignore */ }
+    wc.debugger.sendCommand('Runtime.enable');
+  } catch { /* debugger may fail; bridge degrades */ }
+  return slot;
 }
 
-// (Re)install the page->Node binding. addBinding must be re-applied after each
-// navigation creates a fresh context.
-async function installBinding(wc: Electron.WebContents): Promise<void> {
-  if (!attached) return;
-  try { await wc.debugger.sendCommand('Runtime.addBinding', { name: '__aplydBind' }); } catch { /* already present */ }
+// Ensure a slot's BrowserView exists and is attached to the window.
+function ensureSlot(index: number): Slot {
+  if (!hostWin) throw new Error('autopilot host window not attached');
+  let s = slots[index];
+  if (!s) { s = makeSlot(index); slots[index] = s; }
+  if (!hostWin.getBrowserViews().includes(s.view)) hostWin.addBrowserView(s.view);
+  applyBounds(index);
+  return s;
 }
 
-// Navigate the shared window to a job/search URL and return a Tab handle. The
-// bridge handler is set per call (the filler passes a real handler; sourcing a no-op).
-export async function openJob(url: string, onBridge: (m: BridgeMsg) => Promise<any>): Promise<Tab> {
-  await ensureBrowser();
-  if (!driveWin) throw new Error('drive window unavailable');
-  currentBridge = onBridge;
-  const wc = driveWin.webContents;
+function applyBounds(index: number): void {
+  const s = slots[index];
+  if (!s) return;
+  s.view.setBounds(viewsVisible ? s.bounds : ZERO);
+}
+
+// ── public driver API (slot-aware; slot defaults to 0) ───────────────────────
+export async function ensureBrowser(): Promise<void> { ensureSlot(0); }
+
+export async function openJob(url: string, onBridge: (m: BridgeMsg) => Promise<any>, slot = 0): Promise<Tab> {
+  const s = ensureSlot(slot);
+  s.bridge = onBridge;
+  const wc = s.view.webContents;
   try { await wc.loadURL(url); } catch { /* SPA redirects can reject; continue */ }
-  await sleep(900); // settle late-rendering pages
-  await installBinding(wc);
-  return { wc };
+  await sleep(900);
+  try { await wc.debugger.sendCommand('Runtime.addBinding', { name: '__aplydBind' }); } catch { /* present */ }
+  return { wc, slot };
 }
 
-// Evaluate an expression (may be a Promise; executeJavaScript awaits + returns by value).
 export async function evalInTab(tab: Tab, expression: string): Promise<any> {
   return tab.wc.executeJavaScript(expression, true);
 }
 
-// Inject a script source string into the page (the ported filler engine).
 export async function injectSource(tab: Tab, source: string): Promise<void> {
   await tab.wc.executeJavaScript(source, true);
 }
 
-// Capture a PNG of the current page, write it under userData, return the path.
 export async function screenshot(tab: Tab, jobId: string): Promise<string> {
   const img = await tab.wc.capturePage();
   const dir = path.join(app.getPath('userData'), 'autopilot-shots');
@@ -97,10 +105,41 @@ export async function screenshot(tab: Tab, jobId: string): Promise<string> {
   return file;
 }
 
-// Single reused window, so closing a "tab" just frees the page (keeps the session).
-export async function closeTab(_tab: Tab): Promise<void> { /* keep the window + login */ }
+// Single reused view per slot; "closing" a tab navigates it idle (keeps login).
+export async function closeTab(tab: Tab): Promise<void> {
+  try { await tab.wc.loadURL('about:blank'); } catch { /* ignore */ }
+}
+
+// ── view positioning (driven by the renderer's workspace bounds) ─────────────
+export function setViewBounds(slot: number, rect: { x: number; y: number; width: number; height: number }): void {
+  if (slot < 0 || slot >= MAX_SLOTS) return;
+  const s = slots[slot];
+  if (!s) return;
+  s.bounds = {
+    x: Math.round(rect.x), y: Math.round(rect.y),
+    width: Math.round(rect.width), height: Math.round(rect.height),
+  };
+  applyBounds(slot);
+}
+
+export function setViewsVisible(visible: boolean): void {
+  viewsVisible = visible;
+  for (let i = 0; i < MAX_SLOTS; i++) applyBounds(i);
+}
+
+// Ensure exactly `n` slots exist + are attached; detach the rest.
+export function setActiveSlots(n: number): void {
+  const count = Math.max(1, Math.min(MAX_SLOTS, n));
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    if (i < count) ensureSlot(i);
+    else if (slots[i] && hostWin) { try { hostWin.removeBrowserView(slots[i]!.view); } catch { /* ignore */ } }
+  }
+}
 
 export function shutdown(): void {
-  try { if (driveWin && !driveWin.isDestroyed()) driveWin.destroy(); } catch { /* ignore */ }
-  driveWin = null; attached = false;
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    const s = slots[i];
+    if (s) { try { (s.view.webContents as any).destroy?.(); } catch { /* ignore */ } }
+    slots[i] = null;
+  }
 }

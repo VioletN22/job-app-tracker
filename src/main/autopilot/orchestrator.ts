@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import {
-  ensureBrowser, openJob, injectSource, evalInTab, screenshot, closeTab, Tab, BridgeMsg,
+  ensureBrowser, openJob, injectSource, evalInTab, screenshot, closeTab, setActiveSlots, Tab, BridgeMsg,
 } from './driver';
 import { INJECTED_SOURCE } from './injected';
 import { harvestSearch, boardById } from './sources';
@@ -118,13 +118,13 @@ async function ensureInjected(tab: Tab, ctx: any): Promise<boolean> {
 }
 
 // Drive a single job to the review step (or failure). Does NOT submit.
-async function fillJob(job: AutopilotJob, deps: DriveDeps): Promise<void> {
+async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<void> {
   updateJob(job.id, { state: 'filling', error: null });
   emitStatus(deps, 'Opening ' + (job.company || job.url.slice(0, 48)), job.id);
 
   let tab: Tab | null = null;
   try {
-    tab = await openJob(job.url, handleBridge);
+    tab = await openJob(job.url, handleBridge, slot);
 
     let ctx: any = { company: job.company, title: job.title, jobText: '' };
     try { ctx = await evalInTab(tab, EXTRACT_EXPR) || ctx; } catch { /* keep defaults */ }
@@ -192,21 +192,35 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps): Promise<void> {
 
 // Drive all queued / needs_input jobs (re-attempting needs_input jobs in case the
 // inbox was answered since last run).
+// How many run slots (parallel agents) to use. 1 = single, up to 3 = split.
+let slotCount = 1;
+export function setSlotCount(n: number): void { slotCount = Math.max(1, Math.min(3, n)); setActiveSlots(slotCount); }
+export function getSlotCount(): number { return slotCount; }
+
 export async function runDrive(deps: DriveDeps): Promise<void> {
   if (running) return;
   running = true; cancelled = false;
   try {
     await ensureBrowser();
+    setActiveSlots(slotCount);
     emitStatus(deps, 'Browser ready');
     const todo = getAutopilotJobs().filter((j) => j.state === 'queued' || j.state === 'needs_input').slice(0, PER_RUN_CAP);
     if (!todo.length) { emitStatus(deps, 'Nothing queued'); return; }
-    for (const job of todo) {
-      if (cancelled) break;
-      const fresh = getAutopilotJob(job.id);
-      if (!fresh) continue;
-      await fillJob(fresh, deps);
-      await sleep(rand(3000, 7000)); // human-like gap between jobs
-    }
+
+    // worker pool: one worker per slot pulls the next job off a shared cursor,
+    // so up to `slotCount` applications fill in parallel (each in its own view).
+    let cursor = 0;
+    const worker = async (slot: number) => {
+      while (!cancelled) {
+        const i = cursor++;
+        if (i >= todo.length) break;
+        const fresh = getAutopilotJob(todo[i].id);
+        if (!fresh) continue;
+        await fillJob(fresh, deps, slot);
+        await sleep(rand(3000, 7000)); // human-like gap between jobs
+      }
+    };
+    await Promise.all(Array.from({ length: slotCount }, (_v, slot) => worker(slot)));
     emitStatus(deps, cancelled ? 'Stopped' : 'Run complete');
   } catch (e: any) {
     emitStatus(deps, 'Run error: ' + String(e && e.message ? e.message : e));
