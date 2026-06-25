@@ -214,16 +214,18 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   useViewBounds(slot1, 1, split);
 
   const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [ans, setAns] = useState('');
+  useEffect(() => { if (running) setStarting(false); }, [running]);
   const firstNeed = needs[0] || null;
   const nextReady = jobs.find((j) => j.state === 'ready') || null;
   const readyCount = jobs.filter((j) => j.state === 'ready').length;
   const filling = jobs.find((j) => j.state === 'filling') || null;
   const head = selected || filling || nextReady;
 
-  const run = async () => { await drive().runFull(); };
-  const stop = async () => { await drive().stop(); };
-  const harvest = async () => { await drive().harvest(); };
+  const run = async () => { setStarting(true); try { await drive().runFull(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
+  const stop = async () => { setStarting(false); await drive().stop(); };
+  const harvest = async () => { setStarting(true); try { await drive().harvest(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const approve = async (id: string) => { setBusy(true); await drive().approve(id); await reload(); setBusy(false); };
   const approveAll = async () => { setBusy(true); await drive().approveAll(); await reload(); setBusy(false); };
   const answer = async (v: string) => { if (!firstNeed || !v.trim()) return; setBusy(true); await drive().answerNeed(firstNeed.id, v.trim()); setAns(''); await reload(); setBusy(false); };
@@ -251,12 +253,15 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
-          {running
+          {(running || starting)
             ? <button style={{ ...btn, borderColor: 'var(--accent,#f23a17)', color: 'var(--accent,#f23a17)' }} onClick={stop}><Square size={12} /> Stop</button>
             : <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={run}><Play size={12} /> Run</button>}
-          <button style={btn} onClick={harvest}><Search size={13} /> Harvest</button>
-          <span style={{ fontSize: 12, color: 'var(--muted,#888)', marginLeft: 4 }}>{running ? '● ' : ''}{status}</span>
+          <button style={btn} onClick={harvest} disabled={running || starting}><Search size={13} /> Find jobs</button>
+          <span style={{ fontSize: 12, color: 'var(--muted,#888)', marginLeft: 4, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {starting && !running ? 'Starting…' : (running ? '● ' + status : status)}
+          </span>
         </div>
+        {(running || starting) && <div className="aplyd-bar" style={{ marginTop: 9 }} />}
       </div>
 
       {/* live view mounts (+ co-pilot panel when open) */}

@@ -294,15 +294,22 @@ export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueue
 
 // Full cycle: harvest fresh jobs, then drive everything queued.
 export async function runFull(deps: DriveDeps): Promise<void> {
-  if (running) return;
-  running = true; cancelled = false;
-  try {
-    await ensureBrowser();
-    if (getSavedSearches().some((s) => s.enabled)) {
-      try { await harvest(deps); } catch (e: any) { emitStatus(deps, 'Harvest error: ' + String(e?.message || e)); }
-    }
-  } finally {
-    running = false;
+  if (running) { emitStatus(deps, 'Already running…'); return; }
+  emitStatus(deps, 'Starting…');
+  try { await ensureBrowser(); } catch (e: any) { emitStatus(deps, 'Could not open the browser: ' + String(e?.message || e)); return; }
+
+  const hasSearches = getSavedSearches().some((s) => s.enabled);
+  const hasQueue = getAutopilotJobs().some((j) => j.state === 'queued' || j.state === 'needs_input');
+  if (!hasSearches && !hasQueue) {
+    emitStatus(deps, 'Nothing to run yet — add a role under “What I’m looking for”, then Run.');
+    return;
+  }
+
+  if (hasSearches) {
+    running = true; cancelled = false;
+    try { await harvest(deps); }
+    catch (e: any) { emitStatus(deps, 'Harvest error: ' + String(e?.message || e)); }
+    finally { running = false; }
   }
   if (!cancelled) await runDrive(deps);
 }

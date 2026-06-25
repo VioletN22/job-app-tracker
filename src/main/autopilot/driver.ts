@@ -27,6 +27,11 @@ interface Slot {
 let hostWin: BrowserWindow | null = null;
 let viewsVisible = true;
 const slots: (Slot | null)[] = [null, null, null];
+// Last bounds the renderer reported per slot, kept even before the view exists,
+// so a freshly-created view shows in the right place immediately (no blank flash).
+const lastBounds: { x: number; y: number; width: number; height: number }[] = [
+  { x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 0, height: 0 },
+];
 
 // Called from createWindow so the views can attach to the real app window.
 export function attachHost(win: BrowserWindow): void { hostWin = win; }
@@ -63,7 +68,7 @@ function makeSlot(index: number): Slot {
 function ensureSlot(index: number): Slot {
   if (!hostWin) throw new Error('autopilot host window not attached');
   let s = slots[index];
-  if (!s) { s = makeSlot(index); slots[index] = s; }
+  if (!s) { s = makeSlot(index); slots[index] = s; s.bounds = { ...lastBounds[index] }; }
   if (!hostWin.getBrowserViews().includes(s.view)) hostWin.addBrowserView(s.view);
   applyBounds(index);
   return s;
@@ -113,12 +118,14 @@ export async function closeTab(tab: Tab): Promise<void> {
 // ── view positioning (driven by the renderer's workspace bounds) ─────────────
 export function setViewBounds(slot: number, rect: { x: number; y: number; width: number; height: number }): void {
   if (slot < 0 || slot >= MAX_SLOTS) return;
-  const s = slots[slot];
-  if (!s) return;
-  s.bounds = {
+  const b = {
     x: Math.round(rect.x), y: Math.round(rect.y),
     width: Math.round(rect.width), height: Math.round(rect.height),
   };
+  lastBounds[slot] = b;            // remember even if the view isn't created yet
+  const s = slots[slot];
+  if (!s) return;
+  s.bounds = b;
   applyBounds(slot);
 }
 
