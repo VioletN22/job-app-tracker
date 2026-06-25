@@ -1,160 +1,106 @@
-// Autopilot drive engine — the agent's "hands".
+// Autopilot drive engine — the agent's "hands", running INSIDE aplyd.
 //
-// We spawn a DEDICATED Chrome window (its own --user-data-dir, separate from the
-// user's daily browser) with the DevTools protocol open, then drive it over CDP
-// via chrome-remote-interface. The user logs into LinkedIn/Seek/etc. once in this
-// window; the persistent profile keeps the session. No credentials are stored.
-//
-// Electron 18 ships Node 16, so Playwright (needs Node 18+) is out. CDP via
-// chrome-remote-interface is pure JS and Node-16-safe.
-import { spawn, ChildProcess } from 'child_process';
-import { app } from 'electron';
+// Instead of spawning an external Chrome, we drive a real Electron BrowserWindow
+// (its own persistent session partition, so you log into LinkedIn/Seek/etc. ONCE
+// inside aplyd and it sticks). Page work uses webContents.executeJavaScript /
+// capturePage / loadURL; the only thing those can't do is let the page call back
+// into Node mid-fill, so we use the webContents debugger purely to expose one
+// binding (__aplydBind) for the page->Node bridge. No external browser, no
+// credentials stored.
+import { BrowserWindow } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { app } from 'electron';
 
-// Lazy require so the dependency never touches cold start.
-type CDPClient = any;
-const requireCDP = () => require('chrome-remote-interface') as any;
-
-const CHROME_BIN = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const DEBUG_PORT = 9333;
-
-export interface Tab {
-  targetId: string;
-  client: CDPClient;
-}
-
-let chromeProc: ChildProcess | null = null;
-
-function userDataDir(): string {
-  return path.join(app.getPath('userData'), 'autopilot-chrome');
-}
+export interface Tab { wc: Electron.WebContents; }
+export interface BridgeMsg { id: string; path: string; method: string; body: any; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Is the DevTools endpoint answering yet?
-async function endpointReady(): Promise<boolean> {
-  try {
-    const CDP = requireCDP();
-    await CDP.List({ port: DEBUG_PORT });
-    return true;
-  } catch {
-    return false;
-  }
-}
+let driveWin: BrowserWindow | null = null;
+let attached = false;
+let currentBridge: (m: BridgeMsg) => Promise<any> = async () => ({ ok: false });
 
-// Spawn the dedicated Chrome (idempotent) and wait until CDP is reachable.
+// Create (once) the in-app browser window the agent drives. Visible so you can
+// watch it and log in; persistent partition so the login survives restarts.
 export async function ensureBrowser(): Promise<void> {
-  if (await endpointReady()) return;
-
-  if (!fs.existsSync(CHROME_BIN)) {
-    throw new Error('Google Chrome not found at ' + CHROME_BIN);
-  }
-  const dir = userDataDir();
-  fs.mkdirSync(dir, { recursive: true });
-
-  chromeProc = spawn(
-    CHROME_BIN,
-    [
-      `--remote-debugging-port=${DEBUG_PORT}`,
-      `--user-data-dir=${dir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-features=Translate',
-      // a real window the user can watch and log in through
-      'about:blank',
-    ],
-    { detached: false, stdio: 'ignore' }
-  );
-  chromeProc.on('exit', () => { chromeProc = null; });
-
-  // Wait up to ~15s for the debugging endpoint.
-  for (let i = 0; i < 60; i++) {
-    if (await endpointReady()) return;
-    await sleep(250);
-  }
-  throw new Error('Chrome did not expose its DevTools endpoint in time');
-}
-
-// Open a fresh tab on `url`, wired with Page/Runtime enabled and the bridge
-// binding installed. Caller must closeTab() when done.
-export async function openJob(url: string, onBridge: (msg: BridgeMsg) => Promise<any>): Promise<Tab> {
-  const CDP = requireCDP();
-  const target = await CDP.New({ port: DEBUG_PORT, url: 'about:blank' });
-  const client: CDPClient = await CDP({ target: target.webSocketDebuggerUrl });
-  const { Page, Runtime } = client;
-  await Page.enable();
-  await Runtime.enable();
-  await installBridge(client, onBridge);
-
-  const loaded = Page.loadEventFired();
-  await Page.navigate({ url });
-  await Promise.race([loaded, sleep(20000)]);
-  await sleep(800); // settle late-rendering SPAs
-  return { targetId: target.id, client };
-}
-
-export interface BridgeMsg {
-  id: string;
-  path: string;
-  method: string;
-  body: any;
-}
-
-// Page → Node RPC. The page calls window.__aplydBind(JSON) (a CDP binding); Node
-// runs the handler and resolves the page-side promise via __aplydResolve.
-async function installBridge(client: CDPClient, onBridge: (m: BridgeMsg) => Promise<any>): Promise<void> {
-  const { Runtime } = client;
-  await Runtime.addBinding({ name: '__aplydBind' });
-  client.on('Runtime.bindingCalled', async (ev: any) => {
-    if (ev.name !== '__aplydBind') return;
-    let msg: BridgeMsg;
-    try { msg = JSON.parse(ev.payload); } catch { return; }
-    let result: any = { ok: false };
-    try { result = await onBridge(msg); } catch (e) { result = { ok: false, error: String(e) }; }
-    const expr = `window.__aplydResolve(${JSON.stringify(msg.id)}, ${JSON.stringify(result)})`;
-    try { await Runtime.evaluate({ expression: expr }); } catch { /* tab gone */ }
+  if (driveWin && !driveWin.isDestroyed()) return;
+  driveWin = new BrowserWindow({
+    width: 1200, height: 900, show: true,
+    title: 'aplyd autopilot',
+    webPreferences: {
+      partition: 'persist:autopilot', // dedicated, persistent cookie jar inside aplyd
+      contextIsolation: true,
+      sandbox: false,
+      nodeIntegration: false,
+    },
   });
+  driveWin.on('closed', () => { driveWin = null; attached = false; });
+
+  const wc = driveWin.webContents;
+  try {
+    wc.debugger.attach('1.3');
+    attached = true;
+    wc.debugger.on('message', async (_e, method, params) => {
+      if (method !== 'Runtime.bindingCalled' || params.name !== '__aplydBind') return;
+      let msg: BridgeMsg;
+      try { msg = JSON.parse(params.payload); } catch { return; }
+      let result: any = { ok: false };
+      try { result = await currentBridge(msg); } catch (err) { result = { ok: false, error: String(err) }; }
+      const expr = `window.__aplydResolve(${JSON.stringify(msg.id)}, ${JSON.stringify(result)})`;
+      try { await wc.executeJavaScript(expr, true); } catch { /* page navigated away */ }
+    });
+    await wc.debugger.sendCommand('Runtime.enable');
+  } catch {
+    attached = false; // debugger may already be attached; bridge still best-effort
+  }
+  try { await wc.loadURL('about:blank'); } catch { /* ignore */ }
 }
 
-// Evaluate an expression in the tab and return its (by-value) result. The
-// expression should evaluate to a Promise; we await it.
+// (Re)install the page->Node binding. addBinding must be re-applied after each
+// navigation creates a fresh context.
+async function installBinding(wc: Electron.WebContents): Promise<void> {
+  if (!attached) return;
+  try { await wc.debugger.sendCommand('Runtime.addBinding', { name: '__aplydBind' }); } catch { /* already present */ }
+}
+
+// Navigate the shared window to a job/search URL and return a Tab handle. The
+// bridge handler is set per call (the filler passes a real handler; sourcing a no-op).
+export async function openJob(url: string, onBridge: (m: BridgeMsg) => Promise<any>): Promise<Tab> {
+  await ensureBrowser();
+  if (!driveWin) throw new Error('drive window unavailable');
+  currentBridge = onBridge;
+  const wc = driveWin.webContents;
+  try { await wc.loadURL(url); } catch { /* SPA redirects can reject; continue */ }
+  await sleep(900); // settle late-rendering pages
+  await installBinding(wc);
+  return { wc };
+}
+
+// Evaluate an expression (may be a Promise; executeJavaScript awaits + returns by value).
 export async function evalInTab(tab: Tab, expression: string): Promise<any> {
-  const { result, exceptionDetails } = await tab.client.Runtime.evaluate({
-    expression,
-    awaitPromise: true,
-    returnByValue: true,
-  });
-  if (exceptionDetails) {
-    throw new Error(exceptionDetails.exception?.description || exceptionDetails.text || 'eval failed');
-  }
-  return result.value;
+  return tab.wc.executeJavaScript(expression, true);
 }
 
-// Inject a script source string into the tab (the ported filler engine).
+// Inject a script source string into the page (the ported filler engine).
 export async function injectSource(tab: Tab, source: string): Promise<void> {
-  const { exceptionDetails } = await tab.client.Runtime.evaluate({ expression: source });
-  if (exceptionDetails) {
-    throw new Error('inject failed: ' + (exceptionDetails.exception?.description || exceptionDetails.text));
-  }
+  await tab.wc.executeJavaScript(source, true);
 }
 
-// Capture a PNG screenshot, write it under userData, return the file path.
+// Capture a PNG of the current page, write it under userData, return the path.
 export async function screenshot(tab: Tab, jobId: string): Promise<string> {
-  const { data } = await tab.client.Page.captureScreenshot({ format: 'png', captureBeyondViewport: false });
+  const img = await tab.wc.capturePage();
   const dir = path.join(app.getPath('userData'), 'autopilot-shots');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${jobId}.png`);
-  fs.writeFileSync(file, Buffer.from(data, 'base64'));
+  fs.writeFileSync(file, img.toPNG());
   return file;
 }
 
-export async function closeTab(tab: Tab): Promise<void> {
-  try { await tab.client.close(); } catch { /* ignore */ }
-  try { const CDP = requireCDP(); await CDP.Close({ port: DEBUG_PORT, id: tab.targetId }); } catch { /* ignore */ }
-}
+// Single reused window, so closing a "tab" just frees the page (keeps the session).
+export async function closeTab(_tab: Tab): Promise<void> { /* keep the window + login */ }
 
 export function shutdown(): void {
-  try { chromeProc?.kill(); } catch { /* ignore */ }
-  chromeProc = null;
+  try { if (driveWin && !driveWin.isDestroyed()) driveWin.destroy(); } catch { /* ignore */ }
+  driveWin = null; attached = false;
 }

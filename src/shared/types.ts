@@ -277,6 +277,7 @@ export interface SavedSearch {
   board: string;                 // linkedin | seek | indeed
   query: string;                 // role / keywords
   location: string;
+  maxAgeMinutes: number;         // only harvest jobs posted within this window (0 = any); always sorted newest-first
   enabled: boolean;
   createdAt: string;
 }

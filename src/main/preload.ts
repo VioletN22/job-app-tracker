@@ -116,8 +116,8 @@ const electronAPI = {
   // Saved searches (Phase 2 sourcing)
   search: {
     getAll: (): Promise<SavedSearch[]> => ipcRenderer.invoke('autopilot:search:getAll'),
-    add: (board: string, query: string, location: string): Promise<SavedSearch> =>
-      ipcRenderer.invoke('autopilot:search:add', board, query, location),
+    add: (board: string, query: string, location: string, maxAgeMinutes?: number): Promise<SavedSearch> =>
+      ipcRenderer.invoke('autopilot:search:add', board, query, location, maxAgeMinutes ?? 0),
     setEnabled: (id: string, enabled: boolean): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('autopilot:search:setEnabled', id, enabled),
     delete: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:search:delete', id),

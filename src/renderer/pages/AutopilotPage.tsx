@@ -75,7 +75,23 @@ const STATE_LABEL: Record<string, string> = {
   logged: 'Logged', skipped: 'Skipped', failed: 'Failed',
 };
 
-const BOARD_OPTS = [{ id: 'linkedin', label: 'LinkedIn' }, { id: 'seek', label: 'Seek (AU)' }, { id: 'indeed', label: 'Indeed (AU)' }];
+const BOARD_OPTS = [
+  { id: 'linkedin', label: 'LinkedIn', gran: 'minute' },
+  { id: 'indeed', label: 'Indeed (AU)', gran: 'day' },
+  { id: 'seek', label: 'Seek (AU)', gran: 'day' },
+  { id: 'glassdoor', label: 'Glassdoor', gran: 'day' },
+  { id: 'ziprecruiter', label: 'ZipRecruiter', gran: 'day' },
+  { id: 'adzuna', label: 'Adzuna (AU)', gran: 'day' },
+  { id: 'jora', label: 'Jora (AU)', gran: 'day' },
+  { id: 'weworkremotely', label: 'We Work Remotely', gran: 'none' },
+];
+// max-age choices in minutes (0 = any)
+const AGE_OPTS = [
+  { v: 0, label: 'Any time' }, { v: 5, label: '5 min' }, { v: 15, label: '15 min' }, { v: 30, label: '30 min' },
+  { v: 60, label: '1 hour' }, { v: 180, label: '3 hours' }, { v: 720, label: '12 hours' },
+  { v: 1440, label: '24 hours' }, { v: 4320, label: '3 days' }, { v: 10080, label: '7 days' },
+];
+const ageLabel = (m: number) => AGE_OPTS.find((a) => a.v === m)?.label || `${m}m`;
 
 const CockpitSection: React.FC = () => {
   const [jobs, setJobs] = useState<AutopilotJob[]>([]);
@@ -305,9 +321,11 @@ const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void
   const [board, setBoard] = useState('linkedin');
   const [query, setQuery] = useState('');
   const [loc, setLoc] = useState('');
+  const [age, setAge] = useState(0);
+  const boardGran = (id: string) => BOARD_OPTS.find((b) => b.id === id)?.gran;
   const add = async () => {
     if (!query.trim()) return;
-    await window.electronAPI.search.add(board, query.trim(), loc.trim());
+    await window.electronAPI.search.add(board, query.trim(), loc.trim(), age);
     setQuery(''); setLoc(''); reload();
   };
   return (
@@ -323,17 +341,31 @@ const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void
           <input type="checkbox" checked={s.enabled} onChange={(e) => { window.electronAPI.search.setEnabled(s.id, e.target.checked).then(reload); }} />
           <span style={{ ...tagChip, opacity: 0.7 }}>{BOARD_OPTS.find((b) => b.id === s.board)?.label || s.board}</span>
           <span style={{ flex: 1, fontSize: 13 }}>{s.query}{s.location ? <span style={{ opacity: 0.55 }}> · {s.location}</span> : null}</span>
+          {s.maxAgeMinutes > 0 && <span style={{ ...tagChip, opacity: 0.7 }}>≤ {ageLabel(s.maxAgeMinutes)}</span>}
           <button style={{ ...btn, padding: 6 }} onClick={() => window.electronAPI.search.delete(s.id).then(reload)}><Trash2 size={13} /></button>
         </div>
       ))}
-      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+      <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
         <select value={board} onChange={(e) => setBoard(e.target.value)} style={{ ...input, width: 130 }}>
           {BOARD_OPTS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
         </select>
-        <input style={input} placeholder="Role / keywords" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
-        <input style={{ ...input, width: 150 }} placeholder="Location" value={loc} onChange={(e) => setLoc(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+        <input style={{ ...input, flex: 1, minWidth: 140 }} placeholder="Role / keywords" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+        <input style={{ ...input, width: 130 }} placeholder="Location" value={loc} onChange={(e) => setLoc(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+        <select value={age} onChange={(e) => setAge(Number(e.target.value))} style={{ ...input, width: 110 }} title="Only harvest jobs posted within this window">
+          {AGE_OPTS.map((a) => <option key={a.v} value={a.v}>{a.label}</option>)}
+        </select>
         <button style={btn} onClick={add}><Plus size={14} /></button>
       </div>
+      {age > 0 && age < 1440 && boardGran(board) === 'day' && (
+        <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
+          Note: {BOARD_OPTS.find((b) => b.id === board)?.label} only filters by day, so this rounds to "today, newest first." Only LinkedIn honours sub-day windows.
+        </div>
+      )}
+      {boardGran(board) === 'none' && age > 0 && (
+        <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
+          Note: {BOARD_OPTS.find((b) => b.id === board)?.label} has no date filter; results are simply newest-first.
+        </div>
+      )}
     </div>
   );
 };

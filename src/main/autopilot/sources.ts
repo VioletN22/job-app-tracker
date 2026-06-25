@@ -1,18 +1,23 @@
 // Autopilot sourcing — harvest job postings from board searches by driving the
-// dedicated Chrome (logged in) to each search URL and scraping the result cards.
-// Best-effort + selector-tolerant: we lean on fit-scoring + dedup downstream, so
-// a noisy scrape is fine. New boards = add a Board entry.
+// in-app browser to each search URL and scraping the result cards. Best-effort +
+// selector-tolerant: we lean on fit-scoring + dedup downstream, so a noisy scrape
+// is fine. New board = add a Board entry.
+//
+// Freshness: each board translates a requested "max age" as finely as it can.
+// LinkedIn supports seconds (f_TPR=r<sec>), so "5 minutes" really works there.
+// Most others are day-granular, so they clamp to >=1 day + sort newest-first.
 import { openJob, evalInTab, closeTab, ensureBrowser, BridgeMsg } from './driver';
 import type { JobPosting } from '../../shared/types';
 
 const noBridge = async (_m: BridgeMsg) => ({ ok: false });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const enc = encodeURIComponent;
+const days = (m: number) => Math.max(1, Math.ceil(m / 1440)); // minutes -> whole days, min 1
 
 interface BoardScrape {
-  anchor: string;   // selector for the per-result link
-  card: string;     // closest container selector
-  title: string;    // fallback title selector within the card
+  anchor: string;
+  card: string;
+  title: string;
   company: string;
   location: string;
   source: string;
@@ -21,8 +26,11 @@ interface BoardScrape {
 export interface Board {
   id: string;
   label: string;
-  buildUrl: (query: string, location: string) => string;
+  // maxAgeMinutes === 0 means "any age"; boards still sort newest-first.
+  buildUrl: (query: string, location: string, maxAgeMinutes: number) => string;
   scrape: BoardScrape;
+  // finest freshness this board honours, shown in the UI as a caveat
+  granularity: 'minute' | 'day' | 'none';
 }
 
 // One generic scraper, parameterized per board. Returns plain JSON (serializable).
@@ -51,8 +59,9 @@ function scrapeExpr(s: BoardScrape): string {
 
 export const BOARDS: Board[] = [
   {
-    id: 'linkedin', label: 'LinkedIn',
-    buildUrl: (q, l) => `https://www.linkedin.com/jobs/search/?keywords=${enc(q)}${l ? `&location=${enc(l)}` : ''}`,
+    id: 'linkedin', label: 'LinkedIn', granularity: 'minute',
+    buildUrl: (q, l, m) =>
+      `https://www.linkedin.com/jobs/search/?keywords=${enc(q)}${l ? `&location=${enc(l)}` : ''}&sortBy=DD${m ? `&f_TPR=r${m * 60}` : ''}`,
     scrape: {
       anchor: 'a[href*="/jobs/view/"]',
       card: '.job-card-container, .base-card, .base-search-card, li',
@@ -63,8 +72,22 @@ export const BOARDS: Board[] = [
     },
   },
   {
-    id: 'seek', label: 'Seek (AU)',
-    buildUrl: (q, l) => `https://www.seek.com.au/jobs?keywords=${enc(q)}${l ? `&where=${enc(l)}` : ''}`,
+    id: 'indeed', label: 'Indeed (AU)', granularity: 'day',
+    buildUrl: (q, l, m) =>
+      `https://au.indeed.com/jobs?q=${enc(q)}${l ? `&l=${enc(l)}` : ''}&sort=date${m ? `&fromage=${days(m)}` : ''}`,
+    scrape: {
+      anchor: 'a.jcs-JobTitle, a[id^="job_"], a[href*="/rc/clk"], a[href*="/viewjob"]',
+      card: '.job_seen_beacon, .result, td.resultContent, li',
+      title: 'h2.jobTitle, .jcs-JobTitle',
+      company: '[data-testid="company-name"], .companyName',
+      location: '[data-testid="text-location"], .companyLocation',
+      source: 'indeed',
+    },
+  },
+  {
+    id: 'seek', label: 'Seek (AU)', granularity: 'day',
+    buildUrl: (q, l, m) =>
+      `https://www.seek.com.au/jobs?keywords=${enc(q)}${l ? `&where=${enc(l)}` : ''}&sortmode=ListedDate${m ? `&daterange=${days(m)}` : ''}`,
     scrape: {
       anchor: 'a[data-automation="jobTitle"], a[href*="/job/"]',
       card: 'article, [data-automation="normalJob"]',
@@ -75,15 +98,67 @@ export const BOARDS: Board[] = [
     },
   },
   {
-    id: 'indeed', label: 'Indeed (AU)',
-    buildUrl: (q, l) => `https://au.indeed.com/jobs?q=${enc(q)}${l ? `&l=${enc(l)}` : ''}`,
+    id: 'glassdoor', label: 'Glassdoor', granularity: 'day',
+    buildUrl: (q, l, m) =>
+      `https://www.glassdoor.com/Job/jobs.htm?sc.keyword=${enc(q)}${l ? `&locKeyword=${enc(l)}` : ''}&sortBy=date_desc${m ? `&fromAge=${days(m)}` : ''}`,
     scrape: {
-      anchor: 'a.jcs-JobTitle, a[id^="job_"], a[href*="/rc/clk"], a[href*="/viewjob"]',
-      card: '.job_seen_beacon, .result, td.resultContent, li',
-      title: 'h2.jobTitle, .jcs-JobTitle',
-      company: '[data-testid="company-name"], .companyName',
-      location: '[data-testid="text-location"], .companyLocation',
-      source: 'indeed',
+      anchor: 'a[data-test="job-link"], a[href*="/job-listing/"], a[href*="/partner/jobListing"]',
+      card: 'li.react-job-listing, [data-test="jobListing"], li',
+      title: '[data-test="job-title"], .jobTitle',
+      company: '[data-test="employer-name"], .employerName',
+      location: '[data-test="emp-location"], .location',
+      source: 'glassdoor',
+    },
+  },
+  {
+    id: 'ziprecruiter', label: 'ZipRecruiter', granularity: 'day',
+    buildUrl: (q, l, m) =>
+      `https://www.ziprecruiter.com/jobs-search?search=${enc(q)}${l ? `&location=${enc(l)}` : ''}${m ? `&days=${days(m)}` : ''}`,
+    scrape: {
+      anchor: 'a.job_link, a[href*="/jobs/"], article a[href]',
+      card: 'article.job_result, .job_content, li',
+      title: 'h2, .just_posted, .job_title',
+      company: '.company_name, [data-testid="job-card-company"]',
+      location: '.location, [data-testid="job-card-location"]',
+      source: 'ziprecruiter',
+    },
+  },
+  {
+    id: 'adzuna', label: 'Adzuna (AU)', granularity: 'day',
+    buildUrl: (q, l, m) =>
+      `https://www.adzuna.com.au/search?q=${enc(q)}${l ? `&loc=${enc(l)}` : ''}&sort_by=date&sort_dir=down${m ? `&max_days_old=${days(m)}` : ''}`,
+    scrape: {
+      anchor: 'a[href*="/details/"], a[href*="/ad/"], h2 a',
+      card: 'article, .job, li',
+      title: 'h2',
+      company: '.ui-company, [data-testid="company"]',
+      location: '.ui-location, [data-testid="location"]',
+      source: 'adzuna',
+    },
+  },
+  {
+    id: 'jora', label: 'Jora (AU)', granularity: 'day',
+    buildUrl: (q, l, m) =>
+      `https://au.jora.com/j?q=${enc(q)}${l ? `&l=${enc(l)}` : ''}&sp=facet_listed_date${m ? `&p=&st=date&listed=${days(m)}` : ''}`,
+    scrape: {
+      anchor: 'a.job-link, a[href*="/job/"], h2 a',
+      card: 'article, .job-card, .result, li',
+      title: 'h2, .job-title',
+      company: '.company, .job-company',
+      location: '.location, .job-location',
+      source: 'jora',
+    },
+  },
+  {
+    id: 'weworkremotely', label: 'We Work Remotely (remote)', granularity: 'none',
+    buildUrl: (q) => `https://weworkremotely.com/remote-jobs/search?term=${enc(q)}`,
+    scrape: {
+      anchor: 'li a[href*="/remote-jobs/"], section.jobs li a',
+      card: 'li',
+      title: '.title, span.title',
+      company: '.company, span.company',
+      location: '.region, .company',
+      source: 'weworkremotely',
     },
   },
 ];
@@ -93,9 +168,9 @@ export function boardById(id: string): Board | null {
 }
 
 // Run one board search and return normalized postings (best-effort, capped).
-export async function harvestSearch(board: Board, query: string, location: string, max = 40): Promise<JobPosting[]> {
+export async function harvestSearch(board: Board, query: string, location: string, maxAgeMinutes = 0, max = 40): Promise<JobPosting[]> {
   await ensureBrowser();
-  const url = board.buildUrl(query, location);
+  const url = board.buildUrl(query, location, maxAgeMinutes);
   const tab = await openJob(url, noBridge);
   try {
     // nudge lazy lists to render more cards
@@ -105,7 +180,6 @@ export async function harvestSearch(board: Board, query: string, location: strin
     }
     const items = await evalInTab(tab, scrapeExpr(board.scrape)).catch(() => []);
     const arr: JobPosting[] = Array.isArray(items) ? items : [];
-    // keep only entries with a usable URL + title
     return arr.filter((p) => p && p.url && /^https?:/.test(p.url) && (p.title || '').trim()).slice(0, max);
   } finally {
     await closeTab(tab);

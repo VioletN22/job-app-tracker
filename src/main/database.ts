@@ -219,6 +219,7 @@ export function initializeDatabase(): void {
       board TEXT NOT NULL,
       query TEXT NOT NULL,
       location TEXT,
+      max_age_minutes INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
     )
@@ -283,6 +284,7 @@ function runMigrations(): void {
   // Autopilot fit-scoring columns for DBs created before Phase 2.
   try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN fit_reason TEXT`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN source TEXT`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE saved_searches ADD COLUMN max_age_minutes INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
 
   // One-time backfill: stamp every application that predates the job_source
   // field as 'LinkedIn' (where they were all sourced from). Gated on
@@ -1286,16 +1288,16 @@ export function enqueuePosting(p: JobPosting, fitScore: number | null, fitReason
 
 // ── Saved searches ───────────────────────────────────────────────────────────
 function rowToSearch(r: any): SavedSearch {
-  return { id: r.id, board: r.board, query: r.query, location: r.location ?? '', enabled: r.enabled === 1, createdAt: r.created_at };
+  return { id: r.id, board: r.board, query: r.query, location: r.location ?? '', maxAgeMinutes: r.max_age_minutes ?? 0, enabled: r.enabled === 1, createdAt: r.created_at };
 }
 export function getSavedSearches(): SavedSearch[] {
   return (getDatabase().prepare('SELECT * FROM saved_searches ORDER BY created_at ASC').all() as any[]).map(rowToSearch);
 }
-export function addSavedSearch(board: string, query: string, location: string): SavedSearch {
+export function addSavedSearch(board: string, query: string, location: string, maxAgeMinutes = 0): SavedSearch {
   const db = getDatabase();
   const id = randomUUID();
-  db.prepare('INSERT INTO saved_searches (id, board, query, location, enabled, created_at) VALUES (?,?,?,?,1,?)')
-    .run(id, board, query, location, new Date().toISOString());
+  db.prepare('INSERT INTO saved_searches (id, board, query, location, max_age_minutes, enabled, created_at) VALUES (?,?,?,?,?,1,?)')
+    .run(id, board, query, location, maxAgeMinutes, new Date().toISOString());
   return rowToSearch(db.prepare('SELECT * FROM saved_searches WHERE id=?').get(id));
 }
 export function setSavedSearchEnabled(id: string, enabled: boolean): void {

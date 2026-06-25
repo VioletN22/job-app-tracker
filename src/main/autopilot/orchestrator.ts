@@ -235,7 +235,7 @@ export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueue
     if (!board) continue;
     emitStatus(deps, `Searching ${board.label}: ${s.query}`);
     let postings: any[] = [];
-    try { postings = await harvestSearch(board, s.query, s.location); } catch { postings = []; }
+    try { postings = await harvestSearch(board, s.query, s.location, s.maxAgeMinutes); } catch { postings = []; }
     for (const p of postings) {
       const key = (p.url || '').split('?')[0];
       if (!key || byUrl.has(key) || isJobKnown(key)) continue;
