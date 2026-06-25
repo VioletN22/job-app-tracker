@@ -219,6 +219,13 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   const [starting, setStarting] = useState(false);
   const [ans, setAns] = useState('');
   useEffect(() => { if (running) setStarting(false); }, [running]);
+  // When a run starts, push fresh bounds + visibility so the live apply view shows.
+  useEffect(() => {
+    if (!running && !starting) return;
+    const r = slot0.current?.getBoundingClientRect();
+    if (r && r.width) window.electronAPI.view.setBounds(0, { x: r.left, y: r.top, width: r.width, height: r.height });
+    window.electronAPI.view.setVisible(true);
+  }, [running, starting]);
   const firstNeed = needs[0] || null;
   const nextReady = jobs.find((j) => j.state === 'ready') || null;
   const readyCount = jobs.filter((j) => j.state === 'ready').length;

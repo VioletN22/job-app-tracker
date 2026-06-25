@@ -86,9 +86,13 @@ export async function ensureBrowser(): Promise<void> { ensureSlot(0); }
 export async function openJob(url: string, onBridge: (m: BridgeMsg) => Promise<any>, slot = 0): Promise<Tab> {
   const s = ensureSlot(slot);
   s.bridge = onBridge;
+  // make sure this slot is on top + correctly positioned before it loads
+  if (hostWin) { try { hostWin.setTopBrowserView(s.view); } catch { /* ignore */ } }
+  applyBounds(slot);
   const wc = s.view.webContents;
-  try { await wc.loadURL(url); } catch { /* SPA redirects can reject; continue */ }
-  await sleep(900);
+  // Load with a hard timeout so a slow / never-finishing page can't hang the run.
+  await Promise.race([wc.loadURL(url).catch(() => {}), sleep(18000)]);
+  await sleep(700);
   try { await wc.debugger.sendCommand('Runtime.addBinding', { name: '__aplydBind' }); } catch { /* present */ }
   return { wc, slot };
 }
