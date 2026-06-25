@@ -323,13 +323,13 @@ const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; r
       <div style={{ padding: '12px 14px 6px' }}>
         <h2 style={{ margin: 0, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted,#888)' }}>Core · what aplyd knows</h2>
       </div>
-      {/* tab strip (horizontally scrollable) */}
-      <div style={{ display: 'flex', gap: 2, overflowX: 'auto', padding: '2px 10px 8px', borderBottom: '1px solid var(--line,rgba(0,0,0,.1))' }}>
+      {/* tab strip — wraps to fit, no horizontal scrolling */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '2px 10px 8px', borderBottom: '1px solid var(--line,rgba(0,0,0,.1))' }}>
         {CORE_TABS.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '5px 9px', borderRadius: 7, border: 'none', cursor: 'pointer',
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 7, border: 'none', cursor: 'pointer',
               color: tab === t.id ? '#fff' : 'var(--muted,#888)', background: tab === t.id ? 'var(--ink,#111)' : 'transparent' }}>
-            {t.label}{counts[t.id] != null && <span style={{ fontSize: 9, opacity: 0.8 }}>{counts[t.id]}</span>}
+            {t.label}{counts[t.id] != null && (counts[t.id] as number) > 0 && <span style={{ fontSize: 9, opacity: 0.8 }}>{counts[t.id]}</span>}
           </button>
         ))}
       </div>
