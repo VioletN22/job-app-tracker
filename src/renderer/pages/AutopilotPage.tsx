@@ -255,8 +255,8 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
           {(running || starting)
             ? <button style={{ ...btn, borderColor: 'var(--accent,#f23a17)', color: 'var(--accent,#f23a17)' }} onClick={stop}><Square size={12} /> Stop</button>
-            : <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={run}><Play size={12} /> Run</button>}
-          <button style={btn} onClick={harvest} disabled={running || starting}><Search size={13} /> Find jobs</button>
+            : <button title="Find jobs across your enabled sites AND fill the applications (you approve before anything sends)" style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={run}><Play size={12} /> Run (find + fill)</button>}
+          <button title="Only search + queue matching jobs — don't fill them yet" style={btn} onClick={harvest} disabled={running || starting}><Search size={13} /> Find only</button>
         </div>
         {(running || starting) && <div className="aplyd-bar" style={{ marginTop: 9 }} />}
         {(status && status !== 'Idle') || starting ? (
