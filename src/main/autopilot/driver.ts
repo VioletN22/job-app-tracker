@@ -8,7 +8,7 @@
 //
 // Page work uses webContents.executeJavaScript / capturePage / loadURL; the
 // webContents debugger is used only to expose the __aplydBind page->Node bridge.
-import { BrowserView, BrowserWindow, app } from 'electron';
+import { BrowserView, BrowserWindow, app, session } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
@@ -17,6 +17,20 @@ export interface BridgeMsg { id: string; path: string; method: string; body: any
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MAX_SLOTS = 3;
+function dlog(_msg: string): void { /* diagnostics off */ }
+
+// Deny mic/camera/geolocation/etc. on the autopilot session — filling forms never
+// needs them, and otherwise every job site that asks pops an OS permission prompt.
+let sessionConfigured = false;
+function configureSession(): void {
+  if (sessionConfigured) return;
+  try {
+    const ses = session.fromPartition('persist:autopilot');
+    ses.setPermissionRequestHandler((_wc, _permission, cb) => cb(false));
+    ses.setPermissionCheckHandler(() => false);
+    sessionConfigured = true;
+  } catch { /* ignore */ }
+}
 
 interface Slot {
   view: BrowserView;
@@ -77,11 +91,13 @@ function ensureSlot(index: number): Slot {
 function applyBounds(index: number): void {
   const s = slots[index];
   if (!s) return;
-  s.view.setBounds(viewsVisible ? s.bounds : ZERO);
+  const b = viewsVisible ? s.bounds : ZERO;
+  dlog(`applyBounds slot=${index} visible=${viewsVisible} bounds=${JSON.stringify(b)}`);
+  s.view.setBounds(b);
 }
 
 // ── public driver API (slot-aware; slot defaults to 0) ───────────────────────
-export async function ensureBrowser(): Promise<void> { ensureSlot(0); }
+export async function ensureBrowser(): Promise<void> { configureSession(); ensureSlot(0); }
 
 export async function openJob(url: string, onBridge: (m: BridgeMsg) => Promise<any>, slot = 0): Promise<Tab> {
   const s = ensureSlot(slot);
@@ -127,6 +143,7 @@ export function setViewBounds(slot: number, rect: { x: number; y: number; width:
     width: Math.round(rect.width), height: Math.round(rect.height),
   };
   lastBounds[slot] = b;            // remember even if the view isn't created yet
+  dlog(`setViewBounds slot=${slot} rect=${JSON.stringify(b)} hasView=${!!slots[slot]}`);
   const s = slots[slot];
   if (!s) return;
   s.bounds = b;
@@ -134,6 +151,7 @@ export function setViewBounds(slot: number, rect: { x: number; y: number; width:
 }
 
 export function setViewsVisible(visible: boolean): void {
+  dlog(`setViewsVisible ${visible}`);
   viewsVisible = visible;
   for (let i = 0; i < MAX_SLOTS; i++) applyBounds(i);
 }

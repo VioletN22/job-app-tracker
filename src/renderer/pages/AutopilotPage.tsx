@@ -63,22 +63,34 @@ const FolderGlyph: React.FC = () => (
   </svg>
 );
 
+// Stable, module-scope mount for the embedded live browser view. Must NOT be
+// defined inside a component or it gets recreated each render and the ref ends up
+// pointing at a detached (0×0) element.
+const ViewMount: React.FC<{ r: React.RefObject<HTMLDivElement>; tint?: string }> = ({ r, tint }) => (
+  <div ref={r} style={{ flex: 1, margin: 12, border: '1px solid var(--line,rgba(0,0,0,.12))', borderTop: tint ? `3px solid ${tint}` : '1px solid var(--line,rgba(0,0,0,.12))', borderRadius: 10, background: '#fff', minWidth: 0, position: 'relative', overflow: 'hidden' }}>
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted,#aaa)', fontSize: 12, textAlign: 'center', padding: 20 }}>
+      The live application renders here.<br />Run autopilot, or log in when prompted.
+    </div>
+  </div>
+);
+
 // Report a mount div's screen bounds to main so the native BrowserView tracks it.
+// Reads ref.current fresh on every tick (the element can be replaced on re-render).
 function useViewBounds(ref: React.RefObject<HTMLDivElement>, slot: number, active: boolean) {
   useEffect(() => {
     if (!active) return;
-    const el = ref.current;
-    if (!el) return;
     const report = () => {
+      const el = ref.current;
+      if (!el) return;
       const r = el.getBoundingClientRect();
-      window.electronAPI.view.setBounds(slot, { x: r.left, y: r.top, width: r.width, height: r.height });
+      if (r.width > 0 && r.height > 0) {
+        window.electronAPI.view.setBounds(slot, { x: r.left, y: r.top, width: r.width, height: r.height });
+      }
     };
     report();
-    const ro = new ResizeObserver(report);
-    ro.observe(el);
     window.addEventListener('resize', report);
-    const t = window.setInterval(report, 700); // catch rail collapse / layout shifts
-    return () => { ro.disconnect(); window.removeEventListener('resize', report); clearInterval(t); };
+    const t = window.setInterval(report, 500);
+    return () => { window.removeEventListener('resize', report); clearInterval(t); };
   }, [ref, slot, active]);
 }
 
@@ -241,14 +253,6 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   const approveAll = async () => { setBusy(true); await drive().approveAll(); await reload(); setBusy(false); };
   const answer = async (v: string) => { if (!firstNeed || !v.trim()) return; setBusy(true); await drive().answerNeed(firstNeed.id, v.trim()); setAns(''); await reload(); setBusy(false); };
 
-  const Mount: React.FC<{ r: React.RefObject<HTMLDivElement>; tint?: string }> = ({ r, tint }) => (
-    <div ref={r} style={{ flex: 1, margin: 12, border: '1px solid var(--line,rgba(0,0,0,.12))', borderTop: tint ? `3px solid ${tint}` : '1px solid var(--line,rgba(0,0,0,.12))', borderRadius: 10, background: '#fff', minWidth: 0, position: 'relative', overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted,#aaa)', fontSize: 12, textAlign: 'center', padding: 20 }}>
-        The live application renders here.<br />Run autopilot, or log in when prompted.
-      </div>
-    </div>
-  );
-
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#faf9f6' }}>
       {/* header */}
@@ -293,8 +297,8 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
 
       {/* live view mounts (+ co-pilot panel when open) */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <Mount r={slot0} tint={split ? '#f23a17' : undefined} />
-        {split && <Mount r={slot1} tint="#1f78c8" />}
+        <ViewMount r={slot0} tint={split ? '#f23a17' : undefined} />
+        {split && <ViewMount r={slot1} tint="#1f78c8" />}
       </div>
 
       {/* action bar */}

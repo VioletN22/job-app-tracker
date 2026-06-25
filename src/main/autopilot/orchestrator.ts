@@ -73,11 +73,11 @@ async function handleBridge(msg: BridgeMsg): Promise<{ ok: boolean; data?: any }
       const hit = matchBank(bank, body.label) || (lookupAnsweredNeed(body.label) ? { value: lookupAnsweredNeed(body.label)! } as any : null);
       if (hit) return { ok: true, data: { action: 'fill', value: hit.value, source: 'bank' } };
       if (body.cacheOnly) return { ok: true, data: { action: 'none' } };
-      const out = await runClaudeCLI(resolveFieldPrompt({ label: body.label, type: body.type, options: body.options }), 40000).catch(() => '');
+      const out = await runClaudeCLI(resolveFieldPrompt({ label: body.label, type: body.type, options: body.options }), 22000).catch(() => '');
       return { ok: true, data: parseFieldAction(out) };
     }
     if (p === '/tailor') {
-      const out = await runClaudeCLI(tailorAnswerPrompt({ question: body.question, jobText: body.jobText }), 60000).catch(() => '');
+      const out = await runClaudeCLI(tailorAnswerPrompt({ question: body.question, jobText: body.jobText }), 30000).catch(() => '');
       return { ok: true, data: { answer: out.trim() } };
     }
     if (p === '/documents') {
@@ -134,6 +134,21 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
     updateJob(job.id, { company, title });
 
     if (!(await ensureInjected(tab, ctx))) { throw new Error('could not inject filler'); }
+
+    // Login wall? Pause and let the user sign in (the session persists afterwards,
+    // so it only happens once per site). We wait, keeping the page visible.
+    const LOGIN_EXPR = `(function(){ if(/(\\/login|authwall|uas\\/login|sign[-_]?in|checkpoint|account\\/login|\\/signup)/i.test(location.href)) return true; var p=document.querySelector('input[type=password]'); return !!(p && p.getBoundingClientRect().width>0); })()`;
+    if (await evalInTab(tab, LOGIN_EXPR).catch(() => false)) {
+      emitStatus(deps, `Sign in to ${company} in the window — I'll keep going once you're in.`, job.id);
+      let signedIn = false;
+      for (let i = 0; i < 100 && !cancelled; i++) { // wait up to ~5 min for login
+        await sleep(3000);
+        if (!(await evalInTab(tab, LOGIN_EXPR).catch(() => true))) { signedIn = true; break; }
+      }
+      if (!signedIn) { updateJob(job.id, { state: 'queued' }); return; } // leave for next run
+      await sleep(1200);
+      await ensureInjected(tab, ctx);
+    }
 
     let totalFilled = 0;
     const parkedHere: string[] = [];
