@@ -242,6 +242,7 @@ export type AutopilotJobState =
   | 'submitted'   // submit clicked
   | 'logged'      // recorded into the tracker
   | 'skipped'     // dropped (dupe / low fit)
+  | 'deferred'    // you skipped it mid-fill — saved, started but not finished
   | 'failed';     // login wall / captcha / no form — see `error`
 
 export interface AutopilotJob {
@@ -309,6 +310,7 @@ export interface AutopilotNeed {
 // Live status pushed to the cockpit during a run.
 export interface DriveStatus {
   running: boolean;
+  paused: boolean;
   message: string;
   currentJobId: string | null;
   counts: Record<AutopilotJobState, number>;

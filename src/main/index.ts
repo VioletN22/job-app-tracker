@@ -63,6 +63,7 @@ import {
   deleteAutopilotJob,
   clearFinishedJobs,
   requeueFailed,
+  requeueDeferred,
   getOpenNeeds,
   answerNeed,
   getSavedSearches,
@@ -77,6 +78,7 @@ import {
 import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
 import {
   runDrive, runFull, harvest, stopDrive, approveJob, approveAll, isDriveRunning,
+  pauseDrive, resumeDrive, skipCurrent, isPaused,
   setSlotCount, getSlotCount, DriveDeps,
 } from './autopilot/orchestrator';
 import {
@@ -542,6 +544,10 @@ ipcMain.handle('autopilot:drive:enqueue', async (_e, urls: string[]) => {
 });
 ipcMain.handle('autopilot:drive:run', async () => { runDrive(driveDeps); return { ok: true }; });
 ipcMain.handle('autopilot:drive:stop', async () => { stopDrive(); return { ok: true }; });
+ipcMain.handle('autopilot:drive:pause', async () => { pauseDrive(); return { paused: isPaused() }; });
+ipcMain.handle('autopilot:drive:resume', async () => { resumeDrive(); return { paused: isPaused() }; });
+ipcMain.handle('autopilot:drive:skip', async () => { skipCurrent(); return { ok: true }; });
+ipcMain.handle('autopilot:drive:resumeDeferred', async () => ({ requeued: requeueDeferred() }));
 ipcMain.handle('autopilot:drive:getJobs', async () => getAutopilotJobs());
 ipcMain.handle('autopilot:drive:getNeeds', async () => getOpenNeeds());
 ipcMain.handle('autopilot:drive:answerNeed', async (_e, id: string, value: string) => {

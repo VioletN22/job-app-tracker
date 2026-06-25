@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, FileText, Brain, MessageSquareHeart, Sparkles, Link2, PenLine, Lock, Wand2, Check, ThumbsUp, ThumbsDown, Play, Square, Send, Inbox, AlertTriangle, RotateCcw, Search } from 'lucide-react';
+import { Plus, Trash2, FileText, Brain, MessageSquareHeart, Sparkles, Link2, PenLine, Lock, Wand2, Check, ThumbsUp, ThumbsDown, Play, Pause, Square, Send, Inbox, AlertTriangle, RotateCcw, Search, SkipForward } from 'lucide-react';
 import { AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter, AutopilotJob, AutopilotNeed, DriveStatus } from '../../shared/types';
 
 const api = () => window.electronAPI.autopilot;
@@ -51,7 +51,7 @@ type CoreData = { answers: AnswerBankEntry[]; docs: LockerDocument[]; notes: Voi
 const STATE_DOT: Record<string, string> = {
   filling: '#c08a25', needs_input: '#c08a25', ready: '#f23a17', approved: '#f23a17',
   submitting: '#f23a17', submitted: '#1f9d55', logged: '#1f9d55', queued: '#c7c3bb',
-  skipped: '#c7c3bb', failed: '#c0392b',
+  skipped: '#c7c3bb', deferred: '#7c6f9c', failed: '#c0392b',
 };
 const SITE_LABEL: Record<string, string> = {
   linkedin: 'LinkedIn', indeed: 'Indeed', seek: 'Seek', glassdoor: 'Glassdoor',
@@ -100,6 +100,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
   const [searches, setSearches] = useState<SavedSearch[]>([]);
   const [settings, setSettings] = useState<AutopilotSettings | null>(null);
   const [running, setRunning] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [status, setStatus] = useState('Idle');
   const [activity, setActivity] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -114,7 +115,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
   useEffect(() => {
     reloadDrive();
     const off = drive().onProgress((st: DriveStatus) => {
-      setRunning(st.running); setStatus(st.message);
+      setRunning(st.running); setPaused(st.paused); setStatus(st.message);
       setActivity((a) => (a[a.length - 1] === st.message ? a : [...a, st.message]).slice(-7));
       drive().getJobs().then(setJobs); drive().getNeeds().then(setNeeds);
     });
@@ -130,7 +131,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
   return (
     <div style={{ position: 'fixed', top: 58, left: 'var(--nav-w, 256px)', right: 0, bottom: 0, display: 'flex', background: 'var(--bg)', color: 'var(--ink)', transition: 'left .18s ease' }}>
       <SourcesRail jobs={jobs} needs={needs} searches={searches} selectedId={selectedId} onSelect={setSelectedId} reload={reloadDrive} />
-      <WorkspacePane jobs={jobs} needs={needs} settings={settings} running={running} status={status} activity={activity} split={split} onSplit={setSplitMode} reload={reloadDrive} selected={selected} />
+      <WorkspacePane jobs={jobs} needs={needs} settings={settings} running={running} paused={paused} status={status} activity={activity} split={split} onSplit={setSplitMode} reload={reloadDrive} selected={selected} />
       <CoreRail core={core} settings={settings} reloadDrive={reloadDrive} />
     </div>
   );
@@ -140,7 +141,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
 const SourcesRail: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; searches: SavedSearch[]; selectedId: string | null; onSelect: (id: string) => void; reload: () => void }> = ({ jobs, needs, searches, selectedId, onSelect, reload }) => {
   const [group, setGroup] = useState<'site' | 'status'>('site');
   const [open, setOpen] = useState<Record<string, boolean>>({ linkedin: true });
-  const [showAdd, setShowAdd] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
 
   const Row: React.FC<{ j: AutopilotJob }> = ({ j }) => (
@@ -187,7 +188,20 @@ const SourcesRail: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; sear
         </div>
       </div>
       <div style={{ padding: '0 9px 4px' }}>
-        <Smart label="Needs you" color="#c08a25" count={needsCount} jb={jobs.filter((j) => j.state === 'needs_input')} />
+        {/* Needs you — shows the actual QUESTIONS to answer, not just jobs */}
+        <div style={{ marginBottom: 2 }}>
+          <div onClick={() => toggle('smart:needs')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 8, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#c08a25' }} />Needs you
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--muted,#888)', background: 'rgba(0,0,0,.06)', borderRadius: 20, padding: '1px 7px', fontWeight: 700 }}>{needs.length}</span>
+          </div>
+          {open['smart:needs'] && (
+            <div style={{ padding: '2px 4px 4px' }}>
+              {needs.length === 0
+                ? <div style={{ fontSize: 11, color: 'var(--muted,#888)', padding: '4px 6px' }}>Nothing to answer right now.</div>
+                : needs.map((n) => <NeedRow key={n.id} need={n} onAnswered={reload} />)}
+            </div>
+          )}
+        </div>
         <Smart label="Ready to submit" color="#f23a17" count={readyCount} jb={jobs.filter((j) => j.state === 'ready')} />
       </div>
       <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted,#888)', padding: '10px 13px 4px' }}>By {group}</div>
@@ -221,7 +235,7 @@ const SourcesRail: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; sear
 };
 
 // ── Workspace (center): live embedded browser + action bar ───────────────────
-const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; settings: AutopilotSettings | null; running: boolean; status: string; activity: string[]; split: boolean; onSplit: (on: boolean) => void; reload: () => void; selected: AutopilotJob | null }> = ({ jobs, needs, running, status, activity, split, onSplit, reload, selected }) => {
+const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; settings: AutopilotSettings | null; running: boolean; paused: boolean; status: string; activity: string[]; split: boolean; onSplit: (on: boolean) => void; reload: () => void; selected: AutopilotJob | null }> = ({ jobs, needs, running, paused, status, activity, split, onSplit, reload, selected }) => {
   const slot0 = useRef<HTMLDivElement>(null);
   const slot1 = useRef<HTMLDivElement>(null);
   useViewBounds(slot0, 0, true);
@@ -249,8 +263,13 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   const harvest = async () => { setStarting(true); try { await drive().harvest(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const fillQueue = async () => { setStarting(true); try { await drive().run(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const retryFailed = async () => { setStarting(true); try { await drive().requeueFailed(); await drive().run(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
+  const pause = async () => { await drive().pause(); };
+  const resume = async () => { await drive().resume(); };
+  const skipApp = async () => { await drive().skip(); };
+  const resumeSaved = async () => { setStarting(true); try { await drive().resumeDeferred(); await drive().run(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const queuedCount = jobs.filter((j) => j.state === 'queued').length;
   const failedCount = jobs.filter((j) => j.state === 'failed').length;
+  const deferredCount = jobs.filter((j) => j.state === 'deferred').length;
   const approve = async (id: string) => { setBusy(true); await drive().approve(id); await reload(); setBusy(false); };
   const approveAll = async () => { setBusy(true); await drive().approveAll(); await reload(); setBusy(false); };
   const answer = async (v: string) => { if (!firstNeed || !v.trim()) return; setBusy(true); await drive().answerNeed(firstNeed.id, v.trim()); setAns(''); await reload(); setBusy(false); };
@@ -270,15 +289,25 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
-          {(running || starting)
-            ? <button style={{ ...btn, borderColor: 'var(--accent,#f23a17)', color: 'var(--accent,#f23a17)' }} onClick={stop}><Square size={12} /> Stop</button>
-            : <button title="Find jobs across your enabled sites AND fill the applications (you approve before anything sends)" style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={run}><Play size={12} /> Run (find + fill)</button>}
+          {(running || starting) ? (
+            <>
+              {paused
+                ? <button title="Resume filling" style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={resume}><Play size={12} /> Resume</button>
+                : <button title="Pause filling (finishes the current step, then waits)" style={btn} onClick={pause}><Pause size={12} /> Pause</button>}
+              <button title="Stop the run entirely" style={{ ...btn, borderColor: 'var(--accent,#f23a17)', color: 'var(--accent,#f23a17)' }} onClick={stop}><Square size={12} /> Stop</button>
+            </>
+          ) : (
+            <button title="Find jobs across your enabled sites AND fill the applications (you approve before anything sends)" style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={run}><Play size={12} /> Run (find + fill)</button>
+          )}
           <button title="Only search + queue matching jobs — don't fill them yet" style={btn} onClick={harvest} disabled={running || starting}><Search size={13} /> Find only</button>
           {!running && !starting && queuedCount > 0 && (
             <button title="Fill the applications already queued — no new search" style={btn} onClick={fillQueue}><Play size={13} /> Fill queued ({queuedCount})</button>
           )}
           {!running && !starting && failedCount > 0 && (
             <button title="Reset jobs that failed (e.g. needed login) and try them again" style={btn} onClick={retryFailed}><RotateCcw size={13} /> Retry failed ({failedCount})</button>
+          )}
+          {!running && !starting && deferredCount > 0 && (
+            <button title="Resume the applications you saved for later" style={btn} onClick={resumeSaved}><RotateCcw size={13} /> Resume saved ({deferredCount})</button>
           )}
         </div>
         {(running || starting) && <div className="aplyd-bar" style={{ marginTop: 9 }} />}
@@ -318,10 +347,11 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
               <button key={o} style={btn} disabled={busy} onClick={() => answer(o)}>{o}</button>
             )) : (
               <>
-                <input style={{ ...input, width: 220 }} value={ans} onChange={(e) => setAns(e.target.value)} placeholder="Your answer" onKeyDown={(e) => { if (e.key === 'Enter') answer(ans); }} />
+                <input style={{ ...input, width: 200 }} value={ans} onChange={(e) => setAns(e.target.value)} placeholder="Your answer" onKeyDown={(e) => { if (e.key === 'Enter') answer(ans); }} />
                 <button style={{ ...btn, background: 'var(--ink,#111)', color: '#fff', borderColor: 'var(--ink,#111)' }} disabled={busy} onClick={() => answer(ans)}><Check size={13} /> Save</button>
               </>
             )}
+            {running && <button title="Skip this application — save it under your started-not-finished vault" style={{ ...btn, color: 'var(--muted,#888)' }} onClick={skipApp}><SkipForward size={13} /> Skip app</button>}
           </>
         ) : nextReady ? (
           <>
@@ -494,7 +524,7 @@ const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; r
 const STATE_LABEL: Record<string, string> = {
   queued: 'Queued', filling: 'Filling', needs_input: 'Needs you', ready: 'Ready',
   approved: 'Approving', submitting: 'Submitting', submitted: 'Submitted',
-  logged: 'Logged', skipped: 'Skipped', failed: 'Failed',
+  logged: 'Logged', skipped: 'Skipped', deferred: 'Saved', failed: 'Failed',
 };
 
 const BOARD_OPTS = [

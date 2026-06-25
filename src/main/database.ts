@@ -1211,6 +1211,12 @@ export function requeueFailed(): number {
   return r.changes as number;
 }
 
+// Bring "saved / started but not finished" (deferred) jobs back into the queue.
+export function requeueDeferred(): number {
+  const r = getDatabase().prepare(`UPDATE autopilot_jobs SET state='queued', updated_at=? WHERE state='deferred'`).run(new Date().toISOString());
+  return r.changes as number;
+}
+
 // ── Autopilot: "Needs you" inbox (deduped by normalized label) ───────────────
 const normNeed = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 

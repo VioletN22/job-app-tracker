@@ -37,19 +37,41 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let running = false;
 let cancelled = false;
+let paused = false;          // manual pause (toggle); halts at safe points
+let skipRequested = false;   // user asked to skip the app currently being filled
 
 export function isDriveRunning(): boolean { return running; }
+export function isPaused(): boolean { return paused; }
+export function pauseDrive(): void { paused = true; }
+export function resumeDrive(): void { paused = false; }
+export function skipCurrent(): void { skipRequested = true; }
+async function waitIfPaused(): Promise<void> { while (paused && !cancelled) await sleep(400); }
 
 function counts(): Record<AutopilotJobState, number> {
   const base: Record<string, number> = {
     queued: 0, filling: 0, needs_input: 0, ready: 0, approved: 0,
-    submitting: 0, submitted: 0, logged: 0, skipped: 0, failed: 0,
+    submitting: 0, submitted: 0, logged: 0, skipped: 0, deferred: 0, failed: 0,
   };
   for (const j of getAutopilotJobs()) base[j.state] = (base[j.state] || 0) + 1;
   return base as Record<AutopilotJobState, number>;
 }
 function emitStatus(deps: DriveDeps, message: string, currentJobId: string | null = null): void {
-  deps.emit({ running, message, currentJobId, counts: counts() });
+  deps.emit({ running, paused, message, currentJobId, counts: counts() });
+}
+
+// Wait while the user decides on the app currently being filled: they answer the
+// parked question(s) (→ 'answered', resume same app), skip it (→ 'skip', defer it),
+// or stop the run (→ 'cancel'). Up to ~30 min, then auto-defers.
+async function waitForUser(pendingNorms: string[]): Promise<'answered' | 'skip' | 'cancel'> {
+  for (let i = 0; i < 900; i++) {
+    if (cancelled) return 'cancel';
+    if (skipRequested) { skipRequested = false; return 'skip'; }
+    await waitIfPaused();
+    const open = new Set(getOpenNeeds().map((n) => n.normLabel));
+    if (!pendingNorms.some((p) => open.has(p))) return 'answered';
+    await sleep(2000);
+  }
+  return 'skip';
 }
 
 // ── Node-side bridge: serves the injected page's call() requests ─────────────
@@ -151,10 +173,11 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
     }
 
     let totalFilled = 0;
-    const parkedHere: string[] = [];
     let reachedReview = false;
 
     for (let step = 0; step < MAX_STEPS; step++) {
+      if (cancelled) break;
+      await waitIfPaused();        // honour a manual pause
       if (cancelled) break;
       await ensureInjected(tab, ctx);
       let res: any;
@@ -167,12 +190,30 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
         break;
       }
       totalFilled += res.filled || 0;
-      for (const n of (res.needs || [])) {
-        upsertNeed({ label: n.label, kind: n.kind, options: n.options, hint: n.hint });
-        if (parkedHere.indexOf(norm(n.label)) < 0) parkedHere.push(norm(n.label));
+      updateJob(job.id, { filledCount: totalFilled });
+
+      // Needs you on THIS application? PAUSE here and wait — don't move on. You can
+      // answer (it resumes this same app with your answer) or skip it (it goes to
+      // your "started, not finished" vault and the agent continues to the next).
+      if (res.needs && res.needs.length) {
+        for (const n of res.needs) upsertNeed({ label: n.label, kind: n.kind, options: n.options, hint: n.hint });
+        const pending = res.needs.map((n: any) => norm(n.label));
+        updateJob(job.id, { state: 'needs_input', needsCount: pending.length });
+        emitStatus(deps, `Paused on ${company} — answer below, or skip this one`, job.id);
+        const outcome = await waitForUser(pending);
+        if (outcome === 'cancel') { updateJob(job.id, { state: 'queued' }); return; }
+        if (outcome === 'skip') {
+          try { const shot = await screenshot(tab, job.id); updateJob(job.id, { screenshotPath: shot }); } catch { /* ignore */ }
+          updateJob(job.id, { state: 'deferred', needsCount: 0 });
+          emitStatus(deps, `Saved ${company} for later`, job.id);
+          return;
+        }
+        // answered → re-fill this step with the new answer(s), then carry on
+        updateJob(job.id, { state: 'filling' });
+        emitStatus(deps, `Continuing ${company}…`, job.id);
+        await sleep(500);
+        continue;
       }
-      updateJob(job.id, { filledCount: totalFilled, needsCount: parkedHere.length });
-      emitStatus(deps, 'Filled ' + totalFilled + ' on ' + company + (parkedHere.length ? ' · ' + parkedHere.length + ' need you' : ''), job.id);
 
       const footer = res.footer;
       if (footer === 'submit') { reachedReview = true; break; }
@@ -181,20 +222,15 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
         await sleep(rand(1200, 2200));
         continue;
       }
-      // footer 'none' — nothing more to advance; treat what we filled as the draft
       reachedReview = totalFilled > 0;
       break;
     }
 
     if (cancelled) { updateJob(job.id, { state: 'queued' }); return; }
 
-    // screenshot the draft for the review card
+    // fully filled → ready for your review + submit
     try { const shot = await screenshot(tab, job.id); updateJob(job.id, { screenshotPath: shot }); } catch { /* non-fatal */ }
-
-    // still-open parked questions for THIS job decide ready vs needs_input
-    const openNorms = new Set(getOpenNeeds().map((n) => n.normLabel));
-    const stillOpen = parkedHere.filter((nl) => openNorms.has(nl)).length;
-    updateJob(job.id, { needsCount: stillOpen, state: stillOpen > 0 ? 'needs_input' : (reachedReview ? 'ready' : 'failed'), error: reachedReview ? null : 'could not fill any fields' });
+    updateJob(job.id, { needsCount: 0, state: reachedReview ? 'ready' : 'failed', error: reachedReview ? null : 'could not fill any fields' });
   } catch (e: any) {
     // Vision fallback (Phase 4, pragmatic): we can't reliably auto-solve a login
     // wall / captcha / unknown ATS, so capture the screen so the failure is
@@ -215,7 +251,7 @@ export function getSlotCount(): number { return slotCount; }
 
 export async function runDrive(deps: DriveDeps): Promise<void> {
   if (running) return;
-  running = true; cancelled = false;
+  running = true; cancelled = false; paused = false; skipRequested = false;
   try {
     await ensureBrowser();
     setActiveSlots(slotCount);
@@ -228,6 +264,7 @@ export async function runDrive(deps: DriveDeps): Promise<void> {
     let cursor = 0;
     const worker = async (slot: number) => {
       while (!cancelled) {
+        await waitIfPaused();
         const i = cursor++;
         if (i >= todo.length) break;
         const fresh = getAutopilotJob(todo[i].id);
@@ -321,7 +358,7 @@ async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: nu
 // Find only (IPC): just search + queue, shown on the main view.
 export async function harvest(deps: DriveDeps): Promise<{ enqueued: number }> {
   if (running) { emitStatus(deps, 'Already running…'); return { enqueued: 0 }; }
-  running = true; cancelled = false;
+  running = true; cancelled = false; paused = false; skipRequested = false;
   try { await ensureBrowser(); return await runHarvest(deps, 0); }
   catch (e: any) { emitStatus(deps, 'Harvest error: ' + String(e?.message || e)); return { enqueued: 0 }; }
   finally { running = false; emitStatus(deps, cancelled ? 'Stopped' : 'Idle'); }
@@ -331,6 +368,7 @@ export async function harvest(deps: DriveDeps): Promise<{ enqueued: number }> {
 // waits for more to appear instead of finishing — that's the parallelism.
 async function driveContinuous(deps: DriveDeps, slot: number, isHarvesting: () => boolean): Promise<void> {
   while (!cancelled) {
+    await waitIfPaused();
     const next = getAutopilotJobs().find((j) => j.state === 'queued');
     if (next) {
       const fresh = getAutopilotJob(next.id);
@@ -356,7 +394,7 @@ export async function runFull(deps: DriveDeps): Promise<void> {
     return;
   }
 
-  running = true; cancelled = false;
+  running = true; cancelled = false; paused = false; skipRequested = false;
   let harvesting = hasSearches;
   const harvestP = hasSearches
     ? runHarvest(deps, HARVEST_SLOT).catch((e: any) => { emitStatus(deps, 'Harvest error: ' + String(e?.message || e)); return { enqueued: 0 }; }).finally(() => { harvesting = false; })
