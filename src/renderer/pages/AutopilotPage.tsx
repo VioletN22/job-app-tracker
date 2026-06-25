@@ -235,6 +235,8 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   const run = async () => { setStarting(true); try { await drive().runFull(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const stop = async () => { setStarting(false); await drive().stop(); };
   const harvest = async () => { setStarting(true); try { await drive().harvest(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
+  const fillQueue = async () => { setStarting(true); try { await drive().run(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
+  const queuedCount = jobs.filter((j) => j.state === 'queued').length;
   const approve = async (id: string) => { setBusy(true); await drive().approve(id); await reload(); setBusy(false); };
   const approveAll = async () => { setBusy(true); await drive().approveAll(); await reload(); setBusy(false); };
   const answer = async (v: string) => { if (!firstNeed || !v.trim()) return; setBusy(true); await drive().answerNeed(firstNeed.id, v.trim()); setAns(''); await reload(); setBusy(false); };
@@ -266,6 +268,9 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
             ? <button style={{ ...btn, borderColor: 'var(--accent,#f23a17)', color: 'var(--accent,#f23a17)' }} onClick={stop}><Square size={12} /> Stop</button>
             : <button title="Find jobs across your enabled sites AND fill the applications (you approve before anything sends)" style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={run}><Play size={12} /> Run (find + fill)</button>}
           <button title="Only search + queue matching jobs — don't fill them yet" style={btn} onClick={harvest} disabled={running || starting}><Search size={13} /> Find only</button>
+          {!running && !starting && queuedCount > 0 && (
+            <button title="Fill the applications already queued — no new search" style={btn} onClick={fillQueue}><Play size={13} /> Fill queued ({queuedCount})</button>
+          )}
         </div>
         {(running || starting) && <div className="aplyd-bar" style={{ marginTop: 9 }} />}
         {(running || starting) ? (
