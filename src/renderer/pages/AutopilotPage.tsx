@@ -114,7 +114,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
   const setSplitMode = async (on: boolean) => { setSplit(on); await window.electronAPI.view.setSlots(on ? 2 : 1); };
 
   return (
-    <div style={{ position: 'fixed', top: 58, left: 256, right: 0, bottom: 0, display: 'flex', background: 'var(--bg)', color: 'var(--ink)' }}>
+    <div style={{ position: 'fixed', top: 58, left: 'var(--nav-w, 256px)', right: 0, bottom: 0, display: 'flex', background: 'var(--bg)', color: 'var(--ink)', transition: 'left .18s ease' }}>
       <SourcesRail jobs={jobs} needs={needs} searches={searches} selectedId={selectedId} onSelect={setSelectedId} reload={reloadDrive} />
       <WorkspacePane jobs={jobs} needs={needs} settings={settings} running={running} status={status} split={split} onSplit={setSplitMode} reload={reloadDrive} selected={selected} />
       <CoreRail core={core} settings={settings} reloadDrive={reloadDrive} />

@@ -11,6 +11,9 @@ import { ActivationScreen } from './components/ActivationScreen';
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
+  // collapsible left nav (more room for the workspace) — persisted
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => localStorage.getItem('navCollapsed') === '1');
+  const toggleNav = () => setNavCollapsed((v) => { const n = !v; localStorage.setItem('navCollapsed', n ? '1' : '0'); return n; });
   // purpl hq license gate: null = checking, false = needs activation, true = unlocked
   const [licensed, setLicensed] = useState<boolean | null>(null);
 
@@ -59,10 +62,20 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="screen-main">
-      <Navigation currentPage={currentPage} onNavigate={setCurrentPage} />
+    <div className="screen-main" style={{ ['--nav-w' as string]: navCollapsed ? '0px' : '256px' } as React.CSSProperties}>
+      <Navigation currentPage={currentPage} onNavigate={setCurrentPage} collapsed={navCollapsed} />
       <div className="main-content">
         <header className="header">
+          <button
+            onClick={toggleNav}
+            title={navCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+            aria-label="Toggle sidebar"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink)', padding: 4, marginRight: 4, display: 'flex', alignItems: 'center', opacity: 0.7 }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+              <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" />
+            </svg>
+          </button>
           <h1 className="wordmark">Job Tracker</h1>
           <div className="spacer"></div>
         </header>
