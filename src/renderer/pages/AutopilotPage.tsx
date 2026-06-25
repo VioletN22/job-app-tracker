@@ -300,16 +300,51 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
 };
 
 // ── Core rail (right): everything aplyd knows ────────────────────────────────
+const CORE_TABS = [
+  { id: 'profile', label: 'Profile' },
+  { id: 'answers', label: 'Answers' },
+  { id: 'assets', label: 'Assets' },
+  { id: 'voice', label: 'Voice' },
+  { id: 'letters', label: 'Letters' },
+  { id: 'rules', label: 'Rules' },
+] as const;
+type CoreTab = (typeof CORE_TABS)[number]['id'];
+
 const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; reloadDrive: () => void }> = ({ core, settings, reloadDrive }) => {
+  const [tab, setTab] = useState<CoreTab>('profile');
   const saveSettings = async (patch: Partial<AutopilotSettings>) => { await window.electronAPI.settings.set(patch); reloadDrive(); };
+  // little count badges per tab
+  const counts: Record<CoreTab, number | null> = {
+    profile: null, answers: core.answers.length, assets: core.docs.length + core.links.length,
+    voice: core.notes.length, letters: core.letters.length, rules: null,
+  };
   return (
     <div style={{ width: 326, flex: 'none', borderLeft: '1px solid var(--line,rgba(0,0,0,.11))', background: '#f4f3ef', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <div style={{ padding: '12px 14px 4px' }}>
+      <div style={{ padding: '12px 14px 6px' }}>
         <h2 style={{ margin: 0, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted,#888)' }}>Core · what aplyd knows</h2>
       </div>
-      <div style={{ overflow: 'auto', padding: '6px 12px 16px' }}>
-        {settings && (
-          <div style={{ ...card, marginBottom: 12 }}>
+      {/* tab strip (horizontally scrollable) */}
+      <div style={{ display: 'flex', gap: 2, overflowX: 'auto', padding: '2px 10px 8px', borderBottom: '1px solid var(--line,rgba(0,0,0,.1))' }}>
+        {CORE_TABS.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '5px 9px', borderRadius: 7, border: 'none', cursor: 'pointer',
+              color: tab === t.id ? '#fff' : 'var(--muted,#888)', background: tab === t.id ? 'var(--ink,#111)' : 'transparent' }}>
+            {t.label}{counts[t.id] != null && <span style={{ fontSize: 9, opacity: 0.8 }}>{counts[t.id]}</span>}
+          </button>
+        ))}
+      </div>
+      {/* one panel at a time, scrolls internally */}
+      <div style={{ overflow: 'auto', padding: '10px 12px 16px', flex: 1 }}>
+        {tab === 'profile' && <ProfileSection />}
+        {tab === 'answers' && <AnswerBankSection answers={core.answers} reload={core.reload} />}
+        {tab === 'assets' && <>
+          <DocumentLockerSection docs={core.docs} reload={core.reload} />
+          <PortfolioSection links={core.links} reload={core.reload} />
+        </>}
+        {tab === 'voice' && <VoiceSection notes={core.notes} reload={core.reload} />}
+        {tab === 'letters' && <CoverLetterSection letters={core.letters} reload={core.reload} />}
+        {tab === 'rules' && settings && (
+          <div style={card}>
             <SectionHead icon={<Brain size={15} />} title="Run rules" count={settings.dailyTarget} />
             <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700, margin: '6px 0', cursor: 'pointer' }}>
               <input type="checkbox" checked={settings.enabled} onChange={(e) => saveSettings({ enabled: e.target.checked })} /> Daily auto-run
@@ -321,12 +356,6 @@ const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; r
             </div>
           </div>
         )}
-        <ProfileSection />
-        <AnswerBankSection answers={core.answers} reload={core.reload} />
-        <DocumentLockerSection docs={core.docs} reload={core.reload} />
-        <PortfolioSection links={core.links} reload={core.reload} />
-        <CoverLetterSection letters={core.letters} reload={core.reload} />
-        <VoiceSection notes={core.notes} reload={core.reload} />
       </div>
     </div>
   );
@@ -831,8 +860,10 @@ const CoverLetterStudio: React.FC<{ existing: CoverLetter | null; onClose: () =>
 };
 
 // ── Answer bank ──────────────────────────────────────────────────────────────
+// Compact, searchable answer bank: one-line rows, click a row to expand + edit.
 const AnswerBankSection: React.FC<{ answers: AnswerBankEntry[]; reload: () => void }> = ({ answers, reload }) => {
   const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState('');
   const [label, setLabel] = useState('');
   const [value, setValue] = useState('');
   const [context, setContext] = useState('');
@@ -843,32 +874,69 @@ const AnswerBankSection: React.FC<{ answers: AnswerBankEntry[]; reload: () => vo
     setLabel(''); setValue(''); setContext(''); setAdding(false); reload();
   };
 
+  const s = q.trim().toLowerCase();
+  const filtered = !s ? answers : answers.filter((a) =>
+    a.label.toLowerCase().includes(s) || (a.value || '').toLowerCase().includes(s) || (a.context || '').toLowerCase().includes(s));
+
   return (
     <section style={card}>
       <SectionHead icon={<Brain size={16} />} title="Answer bank" count={answers.length}
         action={<button style={btn} onClick={() => setAdding((v) => !v)}><Plus size={14} /> Add</button>} />
-      <p style={{ fontSize: 12, opacity: 0.6, marginTop: 0 }}>
-        Your reusable answers. Context lets one concept have different values, e.g. display name vs legal name.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, border: '1px solid var(--ink, rgba(0,0,0,.18))', borderRadius: 8, padding: '6px 9px', margin: '8px 0' }}>
+        <Search size={13} style={{ opacity: 0.5, flex: 'none' }} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search answers…"
+          style={{ border: 'none', outline: 'none', background: 'none', color: 'var(--ink, inherit)', fontSize: 12, width: '100%' }} />
+        {q && <span onClick={() => setQ('')} style={{ cursor: 'pointer', opacity: 0.5, fontSize: 12 }}>✕</span>}
+      </div>
 
       {adding && (
         <div style={{ display: 'grid', gap: 8, margin: '10px 0', padding: 12, border: '1px dashed var(--ink, rgba(0,0,0,.2))', borderRadius: 10 }}>
           <input style={input} placeholder='Label (e.g. "Legal name")' value={label} onChange={(e) => setLabel(e.target.value)} />
           <input style={input} placeholder='Value (e.g. "Arkah Mynn Nwe")' value={value} onChange={(e) => setValue(e.target.value)} />
-          <input style={input} placeholder='When to use it (optional, e.g. "when it asks for legal/full name")' value={context} onChange={(e) => setContext(e.target.value)} />
+          <input style={input} placeholder='When to use it (optional)' value={context} onChange={(e) => setContext(e.target.value)} />
           <div><button style={{ ...btn, fontWeight: 700 }} onClick={save}>Save</button></div>
         </div>
       )}
 
-      {answers.length === 0 && <Empty>No saved answers yet. The extension will add them as you apply.</Empty>}
-      {answers.map((a) => (
-        <Row key={a.id} onDelete={async () => { await api().deleteAnswer(a.id); reload(); }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>{a.label}</div>
-          <div style={{ fontSize: 13 }}>{a.value}</div>
-          {a.context && <div style={{ fontSize: 11, opacity: 0.6, fontStyle: 'italic' }}>{a.context}</div>}
-        </Row>
-      ))}
+      {answers.length === 0 && <Empty>No saved answers yet. They build up as autopilot applies (and from answers you give in the workspace).</Empty>}
+      {answers.length > 0 && filtered.length === 0 && <div style={{ fontSize: 12, opacity: 0.5, padding: '8px 2px' }}>No matches for “{q}”.</div>}
+      <div>{filtered.map((a) => <CompactAnswerRow key={a.id} a={a} reload={reload} />)}</div>
     </section>
+  );
+};
+
+const CompactAnswerRow: React.FC<{ a: AnswerBankEntry; reload: () => void }> = ({ a, reload }) => {
+  const [open, setOpen] = useState(false);
+  const [hover, setHover] = useState(false);
+  const [label, setLabel] = useState(a.label);
+  const [value, setValue] = useState(a.value);
+  const [context, setContext] = useState(a.context || '');
+  const saveEdit = async () => {
+    if (!label.trim() || !value.trim()) return;
+    await api().upsertAnswer({ id: a.id, label: label.trim(), value: value.trim(), context: context.trim() || null, patterns: a.patterns || [] });
+    setOpen(false); reload();
+  };
+  const del = async (e: React.MouseEvent) => { e.stopPropagation(); await api().deleteAnswer(a.id); reload(); };
+  return (
+    <div style={{ borderTop: '1px solid var(--ink, rgba(0,0,0,.08))' }}>
+      <div onClick={() => setOpen((v) => !v)} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 2px', cursor: 'pointer', fontSize: 12 }}>
+        <span style={{ flex: 1, minWidth: 0, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.label}</span>
+        {!open && <span style={{ color: 'var(--muted, #888)', maxWidth: 92, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.value}</span>}
+        <span onClick={del} title="Delete" style={{ opacity: hover ? 0.6 : 0, transition: 'opacity .12s', display: 'flex' }}><Trash2 size={13} /></span>
+      </div>
+      {open && (
+        <div style={{ display: 'grid', gap: 6, padding: '2px 2px 10px' }}>
+          <input style={input} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" />
+          <input style={input} value={value} onChange={(e) => setValue(e.target.value)} placeholder="Value" />
+          <input style={input} value={context} onChange={(e) => setContext(e.target.value)} placeholder="When to use it (optional)" />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button style={{ ...btn, fontWeight: 700 }} onClick={saveEdit}><Check size={13} /> Save</button>
+            <button style={{ ...btn, color: 'var(--muted,#888)' }} onClick={() => setOpen(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 
