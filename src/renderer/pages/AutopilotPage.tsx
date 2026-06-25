@@ -126,7 +126,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
 const SourcesRail: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; searches: SavedSearch[]; selectedId: string | null; onSelect: (id: string) => void; reload: () => void }> = ({ jobs, needs, searches, selectedId, onSelect, reload }) => {
   const [group, setGroup] = useState<'site' | 'status'>('site');
   const [open, setOpen] = useState<Record<string, boolean>>({ linkedin: true });
-  const [showAdd, setShowAdd] = useState(false);
+  const [showAdd, setShowAdd] = useState(true);
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
 
   const Row: React.FC<{ j: AutopilotJob }> = ({ j }) => (
@@ -199,7 +199,7 @@ const SourcesRail: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; sear
         ))}
       </div>
       <div style={{ borderTop: '1px solid var(--line,rgba(0,0,0,.1))', padding: 9 }}>
-        <button style={{ ...btn, width: '100%', justifyContent: 'center', fontSize: 12 }} onClick={() => setShowAdd((v) => !v)}><Search size={13} /> Saved searches</button>
+        <button style={{ ...btn, width: '100%', justifyContent: 'center', fontSize: 12 }} onClick={() => setShowAdd((v) => !v)}><Search size={13} /> What I'm looking for {showAdd ? '▾' : '▸'}</button>
         {showAdd && <div style={{ marginTop: 8 }}><SavedSearchManager searches={searches} reload={reload} onHarvest={() => drive().harvest()} running={false} /></div>}
       </div>
     </div>
@@ -257,11 +257,13 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
             ? <button style={{ ...btn, borderColor: 'var(--accent,#f23a17)', color: 'var(--accent,#f23a17)' }} onClick={stop}><Square size={12} /> Stop</button>
             : <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={run}><Play size={12} /> Run</button>}
           <button style={btn} onClick={harvest} disabled={running || starting}><Search size={13} /> Find jobs</button>
-          <span style={{ fontSize: 12, color: 'var(--muted,#888)', marginLeft: 4, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {starting && !running ? 'Starting…' : (running ? '● ' + status : status)}
-          </span>
         </div>
         {(running || starting) && <div className="aplyd-bar" style={{ marginTop: 9 }} />}
+        {(status && status !== 'Idle') || starting ? (
+          <div style={{ fontSize: 12, color: 'var(--muted,#888)', marginTop: 8, lineHeight: 1.45 }}>
+            {starting && !running ? 'Starting…' : (running ? '● ' + status : status)}
+          </div>
+        ) : null}
       </div>
 
       {/* live view mounts (+ co-pilot panel when open) */}
@@ -297,7 +299,7 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
             <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} disabled={busy} onClick={() => approve(nextReady.id)}><Send size={13} /> Approve &amp; submit</button>
           </>
         ) : (
-          <div style={{ fontSize: 12, color: 'var(--muted,#888)' }}>{running ? status : 'Nothing waiting on you. Run autopilot or add a saved search.'}</div>
+          <div style={{ fontSize: 12, color: 'var(--muted,#888)' }}>{running ? status : 'Nothing waiting on you. Add a role in the left panel under “What I’m looking for”, then hit Run.'}</div>
         )}
       </div>
     </div>
