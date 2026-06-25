@@ -1316,7 +1316,7 @@ export function setSetting(key: string, value: string): void {
   getDatabase().prepare('INSERT INTO app_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value);
 }
 
-const DEFAULT_SETTINGS: AutopilotSettings = { enabled: false, dailyTarget: 50, minFit: 60, runTime: '08:00' };
+const DEFAULT_SETTINGS: AutopilotSettings = { enabled: false, dailyTarget: 50, minFit: 60, runTime: '08:00', disabledBoards: [] };
 export function getAutopilotSettings(): AutopilotSettings {
   try {
     const raw = getSetting('autopilot_settings');

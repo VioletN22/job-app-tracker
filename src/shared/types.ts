@@ -288,6 +288,7 @@ export interface AutopilotSettings {
   dailyTarget: number;           // how many to auto-fill per day
   minFit: number;                // skip jobs scoring below this (0-100)
   runTime: string;               // "HH:MM" local time for the daily batch
+  disabledBoards: string[];      // board ids to skip during harvest (others run)
 }
 
 // A deduplicated unknown question in the "Needs you" inbox.

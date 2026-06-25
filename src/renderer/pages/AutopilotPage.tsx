@@ -354,6 +354,27 @@ const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; r
               <label>target <input type="number" min={1} max={200} value={settings.dailyTarget} onChange={(e) => saveSettings({ dailyTarget: Number(e.target.value) })} style={{ ...input, width: 56, display: 'inline-block', padding: '4px 6px' }} /></label>
               <label>min fit <input type="number" min={0} max={100} value={settings.minFit} onChange={(e) => saveSettings({ minFit: Number(e.target.value) })} style={{ ...input, width: 52, display: 'inline-block', padding: '4px 6px' }} /></label>
             </div>
+
+            <div style={{ marginTop: 14, fontSize: 12, fontWeight: 700 }}>Job sites to search</div>
+            <div style={{ fontSize: 11, color: 'var(--muted,#888)', marginBottom: 6 }}>Toggle off any site to skip its saved searches this run.</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {BOARD_OPTS.map((b) => {
+                const off = (settings.disabledBoards || []).includes(b.id);
+                const toggle = () => {
+                  const cur = settings.disabledBoards || [];
+                  const next = off ? cur.filter((x) => x !== b.id) : [...cur, b.id];
+                  saveSettings({ disabledBoards: next });
+                };
+                return (
+                  <button key={b.id} onClick={toggle}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, cursor: 'pointer',
+                      border: '1px solid ' + (off ? 'var(--line,rgba(0,0,0,.2))' : 'var(--accent,#f23a17)'),
+                      background: off ? 'transparent' : 'var(--accent,#f23a17)', color: off ? 'var(--muted,#888)' : '#fff', opacity: off ? 0.6 : 1 }}>
+                    {b.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

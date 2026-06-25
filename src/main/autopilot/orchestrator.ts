@@ -236,9 +236,10 @@ export function stopDrive(): void { cancelled = true; }
 const SCORE_BUDGET = 80; // cap Claude scoring calls per harvest
 
 export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueued: number }> {
-  const searches = getSavedSearches().filter((s) => s.enabled);
-  if (!searches.length) { emitStatus(deps, 'No saved searches'); return { found: 0, enqueued: 0 }; }
   const settings = getAutopilotSettings();
+  const disabled = new Set(settings.disabledBoards || []);
+  const searches = getSavedSearches().filter((s) => s.enabled && !disabled.has(s.board));
+  if (!searches.length) { emitStatus(deps, 'No active saved searches (check enabled searches + job-site toggles)'); return { found: 0, enqueued: 0 }; }
   await ensureBrowser();
 
   // 1. harvest every enabled search, dedupe by URL, drop already-known jobs
