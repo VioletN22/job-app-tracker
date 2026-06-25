@@ -213,7 +213,6 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   useViewBounds(slot0, 0, true);
   useViewBounds(slot1, 1, split);
 
-  const [copilotOpen, setCopilotOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [ans, setAns] = useState('');
   const firstNeed = needs[0] || null;
@@ -246,11 +245,7 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
             {head ? <>{SITE_LABEL[head.source || 'other'] || head.source} <span style={{ opacity: .5 }}>›</span> {head.title || 'Role'} <span style={{ opacity: .5 }}>›</span> <b style={{ color: 'var(--ink,#111)' }}>{head.company || 'Unknown'}</b></> : 'Autopilot workspace'}
           </div>
           {head?.fitScore != null && <span style={{ ...tagChip, borderColor: 'rgba(31,157,85,.5)', color: '#1f9d55' }}>fit {head.fitScore}</span>}
-          <button onClick={() => setCopilotOpen((v) => !v)} title="Co-pilot"
-            style={{ marginLeft: 'auto', ...btn, fontSize: 11, padding: '4px 10px', background: copilotOpen ? 'var(--ink,#111)' : 'transparent', color: copilotOpen ? '#fff' : 'var(--ink)', borderColor: copilotOpen ? 'var(--ink,#111)' : 'var(--line,rgba(0,0,0,.2))' }}>
-            <Sparkles size={13} /> Co-pilot
-          </button>
-          <span style={{ display: 'inline-flex', border: '1px solid var(--line,rgba(0,0,0,.15))', borderRadius: 7, overflow: 'hidden' }}>
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', border: '1px solid var(--line,rgba(0,0,0,.15))', borderRadius: 7, overflow: 'hidden' }}>
             <b onClick={() => onSplit(false)} style={{ padding: '4px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer', color: !split ? '#fff' : 'var(--muted,#888)', background: !split ? 'var(--ink,#111)' : 'transparent' }}>Single</b>
             <b onClick={() => onSplit(true)} style={{ padding: '4px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer', color: split ? '#fff' : 'var(--muted,#888)', background: split ? 'var(--ink,#111)' : 'transparent' }}>Split</b>
           </span>
@@ -268,7 +263,6 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <Mount r={slot0} tint={split ? '#f23a17' : undefined} />
         {split && <Mount r={slot1} tint="#1f78c8" />}
-        {copilotOpen && <CoPilotPanel onClose={() => setCopilotOpen(false)} />}
       </div>
 
       {/* action bar */}
@@ -305,15 +299,16 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   );
 };
 
-// ── Co-pilot chat panel (full-context Claude inside the workspace) ───────────
-const CoPilotPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+// ── Co-pilot dock (permanent, bottom of the Core rail) ───────────────────────
+const CoPilotDock: React.FC = () => {
+  const [open, setOpen] = useState(true);
   const [msgs, setMsgs] = useState<{ role: 'user' | 'assistant'; content: string }[]>([
     { role: 'assistant', content: "Hi — I've got your full profile and your live autopilot run. Ask me to refine your searches, pick which sites to use, sharpen an answer, or work out why something failed." },
   ]);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, busy]);
+  useEffect(() => { if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, busy, open]);
   const send = async () => {
     const t = text.trim();
     if (!t || busy) return;
@@ -324,25 +319,29 @@ const CoPilotPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     setBusy(false);
   };
   return (
-    <div style={{ width: 332, flex: 'none', borderLeft: '1px solid var(--line,rgba(0,0,0,.12))', background: 'var(--bg,#fff)', display: 'flex', flexDirection: 'column', minWidth: 0, margin: '12px 12px 12px 0', borderRadius: 10, border: '1px solid var(--line,rgba(0,0,0,.12))', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '10px 12px', borderBottom: '1px solid var(--line,rgba(0,0,0,.1))' }}>
+    <div style={{ flex: 'none', borderTop: '1px solid var(--line,rgba(0,0,0,.14))', background: 'var(--bg,#fff)', display: 'flex', flexDirection: 'column' }}>
+      <div onClick={() => setOpen((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 12px', cursor: 'pointer' }}>
         <Sparkles size={15} /><span style={{ fontWeight: 700, fontSize: 13 }}>Co-pilot</span>
-        <button onClick={onClose} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted,#888)', fontSize: 15 }}>✕</button>
+        <span style={{ marginLeft: 'auto', color: 'var(--muted,#888)', fontSize: 11 }}>{open ? '▾' : '▸'}</span>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {msgs.map((m, i) => (
-          <div key={i} style={{ alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '88%', fontSize: 12.5, lineHeight: 1.5,
-            background: m.role === 'user' ? 'var(--accent,#f23a17)' : 'rgba(0,0,0,.05)', color: m.role === 'user' ? '#fff' : 'var(--ink)',
-            padding: '8px 11px', borderRadius: 12, whiteSpace: 'pre-wrap' }}>{m.content}</div>
-        ))}
-        {busy && <div style={{ alignSelf: 'flex-start', fontSize: 12, opacity: 0.5 }}>thinking…</div>}
-        <div ref={endRef} />
-      </div>
-      <div style={{ display: 'flex', gap: 6, padding: 10, borderTop: '1px solid var(--line,rgba(0,0,0,.1))' }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
-          placeholder="Ask your co-pilot…" style={{ ...input, fontSize: 12.5 }} disabled={busy} />
-        <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={send} disabled={busy}><Send size={13} /></button>
-      </div>
+      {open && (
+        <>
+          <div style={{ height: 230, overflow: 'auto', padding: '4px 12px 8px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+            {msgs.map((m, i) => (
+              <div key={i} style={{ alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '90%', fontSize: 12.5, lineHeight: 1.5,
+                background: m.role === 'user' ? 'var(--accent,#f23a17)' : 'rgba(0,0,0,.05)', color: m.role === 'user' ? '#fff' : 'var(--ink)',
+                padding: '7px 10px', borderRadius: 12, whiteSpace: 'pre-wrap' }}>{m.content}</div>
+            ))}
+            {busy && <div style={{ alignSelf: 'flex-start', fontSize: 12, opacity: 0.5 }}>thinking…</div>}
+            <div ref={endRef} />
+          </div>
+          <div style={{ display: 'flex', gap: 6, padding: 10, borderTop: '1px solid var(--line,rgba(0,0,0,.1))' }}>
+            <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
+              placeholder="Ask your co-pilot…" style={{ ...input, fontSize: 12.5 }} disabled={busy} />
+            <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={send} disabled={busy}><Send size={13} /></button>
+          </div>
+        </>
+      )}
     </div>
   );
 };
@@ -426,6 +425,7 @@ const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; r
           </div>
         )}
       </div>
+      <CoPilotDock />
     </div>
   );
 };
