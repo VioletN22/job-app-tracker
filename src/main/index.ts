@@ -81,7 +81,7 @@ import {
 import {
   shutdown as shutdownDriveBrowser, attachHost, setViewBounds, setViewsVisible,
 } from './autopilot/driver';
-import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot, profileSeedPrompt, parseProfileSeed, copilotPrompt } from './autopilot-prompts';
+import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot, profileSeedPrompt, parseProfileSeed, copilotPrompt, relatedRolesPrompt, parseRoles } from './autopilot-prompts';
 import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
 import { getFlowData } from './flow';
 import { getLicenseStatus, activateLicense, deactivateLicense } from './license';
@@ -582,6 +582,13 @@ ipcMain.handle('autopilot:copilot:chat', async (_e, history: { role: string; con
     `Enabled job sites: ${enabled}\nDaily target ${settings.dailyTarget}, min fit ${settings.minFit}.`;
   const reply = await runClaudeCLI(copilotPrompt(stateContext, Array.isArray(history) ? history.slice(-16) : []), 90000).catch(() => '');
   return { reply: reply.trim() || 'Sorry — I could not generate a reply just now.' };
+});
+
+// AI role suggestions for the search box (related titles given what they typed).
+ipcMain.handle('autopilot:roles:suggest', async (_e, text: string) => {
+  if (!text || text.trim().length < 2) return [];
+  const out = await runClaudeCLI(relatedRolesPrompt(text.trim(), 8), 20000).catch(() => '');
+  return parseRoles(out);
 });
 
 ipcMain.handle('autopilot:drive:harvest', async () => { harvest(driveDeps); return { ok: true }; });

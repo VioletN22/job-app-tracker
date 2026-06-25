@@ -16,6 +16,7 @@ import { harvestSearch, boardById, BOARDS } from './sources';
 import { runClaudeCLI } from '../claude';
 import {
   resolveFieldPrompt, tailorAnswerPrompt, parseFieldAction, fitScorePrompt, parseFitScore,
+  relatedRolesPrompt, parseRoles,
 } from '../autopilot-prompts';
 import {
   getAnswerBank, getDocuments,
@@ -247,17 +248,35 @@ export async function harvest(deps: DriveDeps): Promise<{ found: number; enqueue
   // 1. fan every search out across the enabled boards; dedupe by URL, drop knowns.
   //    A search with a specific board only runs on that board; an "all" search
   //    (the default) researches every enabled site for you.
-  const byUrl = new Map<string, any>();
-  const runs: { board: ReturnType<typeof boardById>; s: typeof searches[number] }[] = [];
-  for (const s of searches) {
-    const targets = (s.board && s.board !== 'all') ? enabledBoards.filter((b) => b.id === s.board) : enabledBoards;
-    for (const board of targets) runs.push({ board, s });
+  // Expand each search into related role titles (AI), so we cover similar roles,
+  // not just the exact words. Typed roles (comma-separated) are kept; a few
+  // related ones are added. Capped per search.
+  async function expandTerms(query: string): Promise<string[]> {
+    const typed = query.split(',').map((t) => t.trim()).filter(Boolean);
+    const base = typed.length ? typed : [query.trim()].filter(Boolean);
+    if (!base.length) return [];
+    const out = await runClaudeCLI(relatedRolesPrompt(base.join(', '), 4), 20000).catch(() => '');
+    const all = [...base];
+    for (const r of parseRoles(out)) if (!all.some((x) => x.toLowerCase() === r.toLowerCase())) all.push(r);
+    return all.slice(0, 6);
   }
-  for (const { board, s } of runs) {
+
+  const byUrl = new Map<string, any>();
+  const MAX_RUNS = 60; // cap total (role × site) searches per harvest
+  const runs: { board: ReturnType<typeof boardById>; s: typeof searches[number]; term: string }[] = [];
+  for (const s of searches) {
+    if (cancelled) break;
+    emitStatus(deps, `Thinking up related roles for “${s.query}”…`);
+    const terms = await expandTerms(s.query);
+    const targets = (s.board && s.board !== 'all') ? enabledBoards.filter((b) => b.id === s.board) : enabledBoards;
+    for (const board of targets) for (const term of terms) runs.push({ board, s, term });
+  }
+  if (runs.length > MAX_RUNS) emitStatus(deps, `Searching the top ${MAX_RUNS} role×site combinations…`);
+  for (const { board, s, term } of runs.slice(0, MAX_RUNS)) {
     if (cancelled || !board) break;
-    emitStatus(deps, `Searching ${board.label}: ${s.query}`);
+    emitStatus(deps, `Searching ${board.label}: ${term}`);
     let postings: any[] = [];
-    try { postings = await harvestSearch(board, s.query, s.location, s.maxAgeMinutes); } catch { postings = []; }
+    try { postings = await harvestSearch(board, term, s.location, s.maxAgeMinutes); } catch { postings = []; }
     for (const p of postings) {
       const key = (p.url || '').split('?')[0];
       if (!key || byUrl.has(key) || isJobKnown(key)) continue;

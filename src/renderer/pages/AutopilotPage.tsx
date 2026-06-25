@@ -326,9 +326,11 @@ const CoPilotDock: React.FC = () => {
     setBusy(false);
   };
   return (
-    <div style={{ flex: 'none', borderTop: '1px solid var(--line,rgba(0,0,0,.14))', background: 'var(--bg,#fff)', display: 'flex', flexDirection: 'column' }}>
-      <div onClick={() => setOpen((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 12px', cursor: 'pointer' }}>
-        <Sparkles size={15} /><span style={{ fontWeight: 700, fontSize: 13 }}>Co-pilot</span>
+    <div style={{ flex: 'none', borderTop: '1px solid var(--ink,#111)', background: 'var(--bg,#fff)', display: 'flex', flexDirection: 'column', boxShadow: '0 -6px 16px rgba(0,0,0,.05)', margin: '10px 8px 8px', borderRadius: '12px 12px 10px 10px', border: '1px solid var(--line,rgba(0,0,0,.14))' }}>
+      <div onClick={() => setOpen((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '11px 13px', cursor: 'pointer' }}>
+        <div style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--accent,#f23a17)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}><Sparkles size={13} /></div>
+        <span style={{ fontWeight: 800, fontSize: 13 }}>Co-pilot</span>
+        <span style={{ fontSize: 10, color: 'var(--muted,#888)', fontWeight: 600 }}>· full context</span>
         <span style={{ marginLeft: 'auto', color: 'var(--muted,#888)', fontSize: 11 }}>{open ? '▾' : '▸'}</span>
       </div>
       {open && (
@@ -707,11 +709,31 @@ const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void
   const [query, setQuery] = useState('');
   const [loc, setLoc] = useState('');
   const [age, setAge] = useState(0);
+  const [sugs, setSugs] = useState<string[]>([]);
+  const [sugBusy, setSugBusy] = useState(false);
+  // AI: as you type, suggest related role titles (excluding ones already added).
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) { setSugs([]); return; }
+    setSugBusy(true);
+    const t = window.setTimeout(async () => {
+      const existing = new Set(query.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean));
+      try { const res = await window.electronAPI.roles.suggest(q); setSugs(res.filter((r) => !existing.has(r.toLowerCase())).slice(0, 8)); }
+      catch { setSugs([]); }
+      setSugBusy(false);
+    }, 500);
+    return () => { window.clearTimeout(t); };
+  }, [query]);
+  const addSug = (s: string) => {
+    const parts = query.split(',').map((x) => x.trim()).filter(Boolean);
+    if (!parts.some((p) => p.toLowerCase() === s.toLowerCase())) parts.push(s);
+    setQuery(parts.join(', '));
+  };
   const add = async () => {
     if (!query.trim()) return;
     // board 'all' = research every site you've toggled on (Core › Rules).
     await window.electronAPI.search.add('all', query.trim(), loc.trim(), age);
-    setQuery(''); setLoc(''); reload();
+    setQuery(''); setLoc(''); setSugs([]); reload();
   };
   return (
     <div style={{ marginBottom: 14 }}>
@@ -731,6 +753,23 @@ const SavedSearchManager: React.FC<{ searches: SavedSearch[]; reload: () => void
           <button style={{ ...btn, padding: 6 }} onClick={() => window.electronAPI.search.delete(s.id).then(reload)}><Trash2 size={13} /></button>
         </div>
       ))}
+      {(sugs.length > 0 || sugBusy) && (
+        <div style={{ marginTop: 9 }}>
+          <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted,#888)', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Sparkles size={11} /> {sugBusy ? 'Finding related roles…' : 'Related roles — click to add'}
+          </div>
+          {sugs.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+              {sugs.map((s) => (
+                <button key={s} onClick={() => addSug(s)}
+                  style={{ fontSize: 11, fontWeight: 600, padding: '4px 9px', borderRadius: 20, cursor: 'pointer', border: '1px solid var(--accent,#f23a17)', background: 'transparent', color: 'var(--accent,#f23a17)' }}>
+                  + {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
         <input style={{ ...input, flex: 1, minWidth: 150 }} placeholder='Role / keywords (e.g. "Backend engineer")' value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
         <input style={{ ...input, width: 120 }} placeholder="Location" value={loc} onChange={(e) => setLoc(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />

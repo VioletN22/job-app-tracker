@@ -268,6 +268,23 @@ export function copilotPrompt(stateContext: string, history: { role: string; con
   );
 }
 
+// Related job titles for the search box (and run-time expansion). Uses the
+// user's profile so suggestions fit their actual background + seniority.
+export function relatedRolesPrompt(text: string, count = 8): string {
+  return (
+    `The user is searching job boards. Given what they typed and their background, suggest ${count} closely-related job TITLES they'd also want to search for: synonyms, common variants, and adjacent roles/seniorities they'd plausibly be hired for. Judge fit from their profile.\n\n` +
+    `THEY TYPED: ${text}\n\nUSER PROFILE:\n${structuredProfileBlock()}\nKNOWN FACTS:\n${factsBlock()}\n\n` +
+    `Respond ONLY with a JSON array of short title strings, most relevant first. Do not repeat what they already typed.`
+  );
+}
+export function parseRoles(out: string): string[] {
+  try {
+    const m = out.match(/\[[\s\S]*\]/);
+    if (m) { const j = JSON.parse(m[0]); if (Array.isArray(j)) return j.map((x) => String(x).trim()).filter(Boolean).slice(0, 12); }
+  } catch { /* fall through */ }
+  return [];
+}
+
 export function parseFieldAction(out: string): { action: 'fill' | 'ask'; value?: string; hint?: string } {
   try {
     const m = out.match(/\{[\s\S]*\}/);
