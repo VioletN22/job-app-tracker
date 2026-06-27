@@ -242,6 +242,7 @@ const driveDeps: DriveDeps = {
 // A once-a-minute tick fires the full harvest+drive cycle when autopilot is
 // enabled and the clock reaches the configured runTime, at most once per day.
 let scheduleTimer: NodeJS.Timeout | null = null;
+let lastWatchAt = 0;
 function rescheduleDaily(): void {
   if (scheduleTimer) return; // single shared ticker; settings are read each tick
   scheduleTimer = setInterval(() => {
@@ -249,6 +250,18 @@ function rescheduleDaily(): void {
       const s = getAutopilotSettings();
       if (!s.enabled) return;
       const now = new Date();
+
+      // 1. fresh-watch: re-run frequently to catch brand-new posts (apply fast).
+      if (s.watchMinutes && s.watchMinutes > 0 && !isDriveRunning()) {
+        if (now.getTime() - lastWatchAt >= s.watchMinutes * 60 * 1000) {
+          lastWatchAt = now.getTime();
+          log('[autopilot] fresh-watch run firing (every ' + s.watchMinutes + 'm)');
+          runFull(driveDeps);
+          return;
+        }
+      }
+
+      // 2. daily batch at runTime, once per day.
       const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       if (hhmm !== (s.runTime || '08:00')) return;
       const today = now.toISOString().slice(0, 10);

@@ -650,25 +650,18 @@ const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; r
               <label>min fit <input type="number" min={0} max={100} value={settings.minFit} onChange={(e) => saveSettings({ minFit: Number(e.target.value) })} style={{ ...input, width: 52, display: 'inline-block', padding: '4px 6px' }} /></label>
             </div>
 
-            <div style={{ marginTop: 14, fontSize: 12, fontWeight: 700 }}>Job sites to search</div>
-            <div style={{ fontSize: 11, color: 'var(--muted,#888)', marginBottom: 6 }}>Toggle off any site to skip its saved searches this run.</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {BOARD_OPTS.map((b) => {
-                const off = (settings.disabledBoards || []).includes(b.id);
-                const toggle = () => {
-                  const cur = settings.disabledBoards || [];
-                  const next = off ? cur.filter((x) => x !== b.id) : [...cur, b.id];
-                  saveSettings({ disabledBoards: next });
-                };
-                return (
-                  <button key={b.id} onClick={toggle}
-                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, cursor: 'pointer',
-                      border: '1px solid ' + (off ? 'var(--line,rgba(0,0,0,.2))' : 'var(--accent,#f23a17)'),
-                      background: off ? 'transparent' : 'var(--accent,#f23a17)', color: off ? 'var(--muted,#888)' : '#fff', opacity: off ? 0.6 : 1 }}>
-                    {b.label}
-                  </button>
-                );
-              })}
+            <div style={{ marginTop: 14, fontSize: 12, fontWeight: 700 }}>Apply fast — fresh watch</div>
+            <div style={{ fontSize: 11, color: 'var(--muted,#888)', marginBottom: 6 }}>
+              Re-check your searches on a short interval and auto-apply to brand-new posts (best with a tight max-age on LinkedIn). Needs daily auto-run on.
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 12, color: 'var(--muted,#888)', alignItems: 'center' }}>
+              <span>Check every</span>
+              <select value={settings.watchMinutes || 0} onChange={(e) => saveSettings({ watchMinutes: Number(e.target.value) })} style={{ ...input, width: 110 }}>
+                {[{ v: 0, l: 'Off' }, { v: 15, l: '15 min' }, { v: 30, l: '30 min' }, { v: 60, l: '1 hour' }].map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
+              </select>
+            </div>
+            <div style={{ marginTop: 14, fontSize: 11, color: 'var(--muted,#888)' }}>
+              Manage which job sites under the <b>Sources</b> tab.
             </div>
           </div>
         )}

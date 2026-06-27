@@ -292,6 +292,7 @@ export interface AutopilotSettings {
   minFit: number;                // skip jobs scoring below this (0-100)
   runTime: string;               // "HH:MM" local time for the daily batch
   disabledBoards: string[];      // board ids to skip during harvest (others run)
+  watchMinutes: number;          // 0 = off; re-check for fresh jobs every N minutes
 }
 
 // A deduplicated unknown question in the "Needs you" inbox.
