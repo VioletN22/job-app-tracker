@@ -498,7 +498,36 @@ const SourcesPanel: React.FC = () => {
       {enabled.length === 0 && <Empty>No sources on. Browse to enable some.</Empty>}
       <button style={{ ...btn, width: '100%', justifyContent: 'center', marginTop: 11 }} onClick={() => setBrowse(true)}><Plus size={14} /> Browse all sources</button>
       {browse && <BrowseSourcesModal cat={cat} onToggle={toggleEnabled} onMode={setMode} onClose={() => setBrowse(false)} />}
+      <GithubReposSection />
     </section>
+  );
+};
+
+// GitHub curated job-list repos (markdown tables w/ direct apply links → auto-mode).
+const GithubReposSection: React.FC = () => {
+  const [repos, setRepos] = useState<{ owner: string; repo: string }[]>([]);
+  const [url, setUrl] = useState('');
+  const load = async () => setRepos(await window.electronAPI.sources.githubList());
+  useEffect(() => { load(); }, []);
+  const add = async () => { if (!url.trim()) return; const r = await window.electronAPI.sources.githubAdd(url.trim()); setRepos(r.repos); setUrl(''); };
+  const remove = async (o: string, rp: string) => { const r = await window.electronAPI.sources.githubRemove(o, rp); setRepos(r.repos); };
+  return (
+    <div style={{ marginTop: 16, borderTop: '1px solid var(--line,rgba(0,0,0,.12))', paddingTop: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 700 }}>GitHub job lists</div>
+      <div style={{ fontSize: 11, color: 'var(--muted,#888)', margin: '2px 0 8px', lineHeight: 1.45 }}>
+        Curated repos (e.g. <span style={{ fontFamily: 'monospace' }}>SimplifyJobs/New-Grad-Positions</span>). Direct apply links, so they auto-apply. Mostly US/remote, your fit filter keeps the relevant ones.
+      </div>
+      {repos.map((r) => (
+        <div key={r.owner + '/' + r.repo} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 12 }}>
+          <span style={{ flex: 1, minWidth: 0, fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.owner}/{r.repo}</span>
+          <button style={{ ...btn, padding: 5 }} onClick={() => remove(r.owner, r.repo)}><Trash2 size={13} /></button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+        <input style={input} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="owner/repo or GitHub URL" onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+        <button style={btn} onClick={add}><Plus size={14} /></button>
+      </div>
+    </div>
   );
 };
 

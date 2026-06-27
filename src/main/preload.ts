@@ -155,6 +155,9 @@ const electronAPI = {
       ipcRenderer.invoke('autopilot:sources:catalog'),
     setMode: (boardId: string, mode: 'auto' | 'find' | 'default'): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('autopilot:sources:setMode', boardId, mode),
+    githubList: (): Promise<{ owner: string; repo: string }[]> => ipcRenderer.invoke('autopilot:github:list'),
+    githubAdd: (url: string): Promise<{ ok: boolean; repos: { owner: string; repo: string }[] }> => ipcRenderer.invoke('autopilot:github:add', url),
+    githubRemove: (owner: string, repo: string): Promise<{ repos: { owner: string; repo: string }[] }> => ipcRenderer.invoke('autopilot:github:remove', owner, repo),
   },
 
   // AI related-role suggestions for the search box

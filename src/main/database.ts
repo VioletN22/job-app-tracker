@@ -1069,6 +1069,21 @@ export function addDocument(label: string, filePath: string, tags: string[], isD
   return rowToDoc(db.prepare('SELECT * FROM locker_documents WHERE id=?').get(id));
 }
 
+// GitHub job-list repos the user has added (parsed during harvest).
+export function getGithubRepos(): { owner: string; repo: string }[] {
+  try { const raw = getSetting('github_repos'); return raw ? JSON.parse(raw) : []; } catch { return []; }
+}
+export function addGithubRepo(owner: string, repo: string): void {
+  const list = getGithubRepos();
+  if (!list.some((r) => r.owner.toLowerCase() === owner.toLowerCase() && r.repo.toLowerCase() === repo.toLowerCase())) {
+    list.push({ owner, repo });
+    setSetting('github_repos', JSON.stringify(list));
+  }
+}
+export function removeGithubRepo(owner: string, repo: string): void {
+  setSetting('github_repos', JSON.stringify(getGithubRepos().filter((r) => !(r.owner === owner && r.repo === repo))));
+}
+
 // Per-resume "focus" notes (docId -> focus text), used to pick the best variant.
 export function getResumeFocus(): Record<string, string> {
   try { const raw = getSetting('resume_focus'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }

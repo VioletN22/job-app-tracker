@@ -77,9 +77,13 @@ import {
   setAutopilotSettings,
   getBoardModes,
   setBoardMode,
+  getGithubRepos,
+  addGithubRepo,
+  removeGithubRepo,
   getSetting,
   setSetting,
 } from './database';
+import { parseRepoRef } from './autopilot/github-jobs';
 import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
 import {
   runDrive, runFull, harvest, stopDrive, approveJob, approveAll, isDriveRunning,
@@ -582,6 +586,10 @@ ipcMain.handle('autopilot:sources:catalog', async () => {
   }));
 });
 ipcMain.handle('autopilot:sources:setMode', async (_e, boardId: string, mode: 'auto' | 'find' | 'default') => { setBoardMode(boardId, mode); return { ok: true }; });
+// GitHub job-list repos
+ipcMain.handle('autopilot:github:list', async () => getGithubRepos());
+ipcMain.handle('autopilot:github:add', async (_e, url: string) => { const r = parseRepoRef(url); if (r) addGithubRepo(r.owner, r.repo); return { ok: !!r, repos: getGithubRepos() }; });
+ipcMain.handle('autopilot:github:remove', async (_e, owner: string, repo: string) => { removeGithubRepo(owner, repo); return { repos: getGithubRepos() }; });
 ipcMain.handle('autopilot:drive:getJobs', async () => getAutopilotJobs());
 ipcMain.handle('autopilot:drive:getNeeds', async () => getOpenNeeds());
 ipcMain.handle('autopilot:drive:answerNeed', async (_e, id: string, value: string) => {

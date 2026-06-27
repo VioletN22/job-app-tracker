@@ -13,6 +13,7 @@ import {
 } from './driver';
 import { INJECTED_SOURCE } from './injected';
 import { harvestSearch, boardById, boardMode, BOARDS } from './sources';
+import { fetchRepoJobs } from './github-jobs';
 import { runClaudeCLI } from '../claude';
 import {
   resolveFieldPrompt, tailorAnswerPrompt, parseFieldAction, fitScorePrompt, parseFitScore,
@@ -22,7 +23,7 @@ import {
   getAnswerBank, getDocuments,
   getAutopilotJobs, getAutopilotJob, updateJob, upsertNeed, getOpenNeeds, lookupAnsweredNeed,
   getSavedSearches, enqueuePosting, isJobKnown, getAutopilotSettings, countLoggedToday,
-  getBoardModes, getResumeFocus,
+  getBoardModes, getResumeFocus, getGithubRepos,
 } from '../database';
 import type { AnswerBankEntry, AutopilotJob, AutopilotJobState, DriveStatus } from '../../shared/types';
 
@@ -333,8 +334,9 @@ async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: nu
   const disabled = new Set(settings.disabledBoards || []);
   const enabledBoards = BOARDS.filter((b) => !disabled.has(b.id));
   const searches = getSavedSearches().filter((s) => s.enabled);
-  if (!searches.length) { emitStatus(deps, 'No searches set — tell autopilot what kind of job to look for.'); return { enqueued: 0 }; }
-  if (!enabledBoards.length) { emitStatus(deps, 'All job sites are toggled off (Core › Rules).'); return { enqueued: 0 }; }
+  const hasRepos = getGithubRepos().length > 0;
+  if (!searches.length && !hasRepos) { emitStatus(deps, 'No searches set — tell autopilot what kind of job to look for.'); return { enqueued: 0 }; }
+  if (!enabledBoards.length && !searches.length) { /* repos-only run is fine */ }
 
   const runs: { board: ReturnType<typeof boardById>; s: typeof searches[number]; term: string }[] = [];
   for (const s of searches) {
@@ -369,6 +371,29 @@ async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: nu
     }
     await sleep(rand(350, 800));
   }
+
+  // GitHub job-list repos: fetch + parse their tables, score, enqueue (auto-mode).
+  // Light remote/AU prefilter saves scoring on US-onsite roles that won't fit.
+  const repos = getGithubRepos();
+  for (const r of repos) {
+    if (cancelled || scored >= SCORE_BUDGET || remainingTarget() <= 0) break;
+    emitStatus(deps, `Reading ${r.owner}/${r.repo} job list…`);
+    let rjobs: any[] = [];
+    try { rjobs = await fetchRepoJobs(r); } catch { rjobs = []; }
+    rjobs = rjobs.filter((p) => !p.location || /remote|australia|anywhere|sydney|melbourne|brisbane|\bau\b/i.test(p.location));
+    for (const p of rjobs) {
+      if (cancelled || scored >= SCORE_BUDGET || remainingTarget() <= 0) break;
+      const k = (p.url || '').split('?')[0];
+      if (!k || seen.has(k) || isJobKnown(k)) continue; seen.add(k);
+      const out = await runClaudeCLI(fitScorePrompt(p), 25000).catch(() => '');
+      const { score, reason } = parseFitScore(out); scored++;
+      if (score >= settings.minFit) {
+        const job = enqueuePosting(p, score, reason, 'auto');
+        if (job) { enqueued++; emitStatus(deps, `Queued ${job.company || p.title || 'role'} (fit ${score}) · from ${r.repo}`); }
+      }
+    }
+  }
+
   emitStatus(deps, cancelled ? 'Search stopped' : `Search done · queued ${enqueued}`);
   return { enqueued };
 }
@@ -405,7 +430,7 @@ export async function runFull(deps: DriveDeps): Promise<void> {
   emitStatus(deps, 'Starting…');
   try { await ensureBrowser(); } catch (e: any) { emitStatus(deps, 'Could not open the browser: ' + String(e?.message || e)); return; }
 
-  const hasSearches = getSavedSearches().some((s) => s.enabled);
+  const hasSearches = getSavedSearches().some((s) => s.enabled) || getGithubRepos().length > 0;
   const hasQueue = getAutopilotJobs().some((j) => j.state === 'queued' || j.state === 'needs_input');
   if (!hasSearches && !hasQueue) {
     emitStatus(deps, 'Nothing to run yet — add a role under “What I’m looking for”, then Run.');
