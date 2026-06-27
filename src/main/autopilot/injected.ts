@@ -115,6 +115,20 @@ export const INJECTED_SOURCE = String.raw`
     return labels.findIndex(function (l) { return re.test(l); });
   }
 
+  // Page chrome (site nav / global search / header / footer) is NOT the form.
+  function inChrome(el) {
+    return !!el.closest('nav, header, footer, [role="navigation"], [role="search"], [role="banner"], '
+      + '.global-nav, .search-global-typeahead, [data-test-global-nav], .authentication-outlet, '
+      + '.scaffold-layout__sticky-header, .msg-overlay-list-bubble');
+  }
+  function looksLikeChromeField(el, label) {
+    if (inChrome(el)) return true;
+    var l = (label || '').toLowerCase();
+    var ph = (el.getAttribute('placeholder') || '').toLowerCase();
+    var aria = (el.getAttribute('aria-label') || '').toLowerCase();
+    return /^search\b|search (jobs|by|for)|global search/.test(l + ' ' + ph + ' ' + aria);
+  }
+
   function collectFields(root) {
     var out = [];
     var seen = new Set();
@@ -122,6 +136,7 @@ export const INJECTED_SOURCE = String.raw`
       if (!isVisible(el)) return;
       var type = (el.getAttribute('type') || el.tagName).toLowerCase();
       if (['hidden', 'submit', 'button', 'search', 'password'].indexOf(type) >= 0) return;
+      if (looksLikeChromeField(el, labelFor(el))) return; // skip site nav / search boxes
 
       if (el.tagName === 'SELECT') {
         var options = [].slice.call(el.options).map(function (o) { return o.text.trim(); }).filter(function (t) { return t && !/^(select|choose|please|pick)/i.test(t); });
@@ -213,21 +228,38 @@ export const INJECTED_SOURCE = String.raw`
   }
 
   // ---- form root + footer detection (generic, no adapters) ----------------
+  // count only REAL application fields (ignore nav/search/header chrome)
+  function realFieldCount(scope) {
+    return [].slice.call(scope.querySelectorAll('input, select, textarea')).filter(function (el) {
+      if (!isVisible(el)) return false;
+      var t = (el.getAttribute('type') || el.tagName).toLowerCase();
+      if (['hidden', 'submit', 'button', 'search', 'password'].indexOf(t) >= 0) return false;
+      return !looksLikeChromeField(el, labelFor(el));
+    }).length;
+  }
   function getFormRoot() {
     // LinkedIn Easy Apply modal first
     var modal = document.querySelector('.jobs-easy-apply-modal, [data-test-modal][role="dialog"], div[role="dialog"]');
-    if (modal && isVisible(modal) && modal.querySelector('input, select, textarea')) return modal;
-    // otherwise the visible form with the most fields
+    if (modal && isVisible(modal) && realFieldCount(modal) > 0) return modal;
+    // otherwise the visible form with the most REAL fields
     var forms = [].slice.call(document.querySelectorAll('form')).filter(isVisible);
     var best = null, bestN = 0;
-    forms.forEach(function (fm) {
-      var n = [].slice.call(fm.querySelectorAll('input, select, textarea')).filter(isVisible).length;
-      if (n > bestN) { bestN = n; best = fm; }
-    });
+    forms.forEach(function (fm) { var n = realFieldCount(fm); if (n > bestN) { bestN = n; best = fm; } });
     if (best && bestN > 0) return best;
-    // last resort: the whole document if it has fields
-    if ([].slice.call(document.querySelectorAll('input, select, textarea')).filter(isVisible).length) return document.body;
-    return null;
+    // last resort: the whole document, but only if it has real application fields
+    if (realFieldCount(document.body) > 0) return document.body;
+    return null; // no application form here (e.g. a job description / external-apply page)
+  }
+
+  // Open a LinkedIn Easy Apply modal (in-page apply). Returns true if clicked.
+  // Does NOT click external "Apply" buttons (those leave the site).
+  function clickEasyApply() {
+    var btns = [].slice.call(document.querySelectorAll('button, a')).filter(isVisible);
+    for (var i = 0; i < btns.length; i++) {
+      var t = (btns[i].innerText || btns[i].getAttribute('aria-label') || '').trim();
+      if (/easy apply/i.test(t)) { btns[i].click(); return true; }
+    }
+    return false;
   }
 
   function buttonsIn(root) {
@@ -253,7 +285,11 @@ export const INJECTED_SOURCE = String.raw`
   // Fill the current visible step once. Returns { filled, needs[], footer, noForm }.
   function fillStep() {
     var root = getFormRoot();
-    if (!root) return Promise.resolve({ filled: 0, needs: [], footer: 'none', noForm: true });
+    if (!root) {
+      // no form yet — try to open a LinkedIn Easy Apply modal, then retry
+      if (clickEasyApply()) return Promise.resolve({ filled: 0, needs: [], footer: 'none', opening: true });
+      return Promise.resolve({ filled: 0, needs: [], footer: 'none', noForm: true });
+    }
     var fields = collectFields(root);
     var filled = 0;
     var needs = [];

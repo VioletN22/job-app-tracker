@@ -285,12 +285,14 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   const head = selected || filling || nextReady;
 
   const run = async () => { setStarting(true); try { await drive().runFull(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
-  const stop = async () => { setStarting(false); await drive().stop(); };
+  const stop = async () => { setPending('stopping'); setStarting(false); await drive().stop(); };
   const harvest = async () => { setStarting(true); try { await drive().harvest(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const fillQueue = async () => { setStarting(true); try { await drive().run(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const retryFailed = async () => { setStarting(true); try { await drive().requeueFailed(); await drive().run(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
-  const pause = async () => { await drive().pause(); };
-  const resume = async () => { await drive().resume(); };
+  const [pending, setPending] = useState<null | 'pausing' | 'resuming' | 'stopping'>(null);
+  useEffect(() => { setPending(null); }, [paused, running]); // clear once state actually flips
+  const pause = async () => { setPending('pausing'); await drive().pause(); };
+  const resume = async () => { setPending('resuming'); await drive().resume(); };
   const skipApp = async () => { await drive().skip(); };
   const resumeSaved = async () => { setStarting(true); try { await drive().resumeDeferred(); await drive().run(); } finally { window.setTimeout(() => setStarting(false), 6000); } };
   const queuedCount = jobs.filter((j) => j.state === 'queued').length;
@@ -321,9 +323,9 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
           {(running || starting) ? (
             <>
               {paused
-                ? <button title="Resume filling" style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={resume}><Play size={12} /> Resume</button>
-                : <button title="Pause filling (finishes the current step, then waits)" style={btn} onClick={pause}><Pause size={12} /> Pause</button>}
-              <button title="Stop the run entirely" style={{ ...btn, borderColor: 'var(--accent,#f23a17)', color: 'var(--accent,#f23a17)' }} onClick={stop}><Square size={12} /> Stop</button>
+                ? <button title="Resume filling" style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={resume} disabled={!!pending}><Play size={12} /> {pending === 'resuming' ? 'Resuming…' : 'Resume'}</button>
+                : <button title="Pause filling (finishes the current step, then waits)" style={{ ...btn, ...(pending === 'pausing' ? { background: 'var(--ink,#111)', color: '#fff', borderColor: 'var(--ink,#111)' } : {}) }} onClick={pause} disabled={!!pending}><Pause size={12} /> {pending === 'pausing' ? 'Pausing…' : 'Pause'}</button>}
+              <button title="Stop the run entirely" style={{ ...btn, borderColor: 'var(--accent,#f23a17)', color: 'var(--accent,#f23a17)' }} onClick={stop} disabled={pending === 'stopping'}><Square size={12} /> {pending === 'stopping' ? 'Stopping…' : 'Stop'}</button>
             </>
           ) : (
             <button title="Find jobs across your enabled sites AND fill the applications (you approve before anything sends)" style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} onClick={run}><Play size={12} /> Run (find + fill)</button>
@@ -358,31 +360,37 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
         ) : null)}
       </div>
 
+      {/* prominent "needs you" prompt — pushes the live view down so it's never hidden */}
+      {firstNeed && (
+        <div style={{ margin: '10px 14px 0', padding: '12px 14px', border: '1.5px solid var(--accent,#f23a17)', borderRadius: 10, background: 'rgba(242,58,23,.05)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--accent,#f23a17)', marginBottom: 6 }}>
+            <Inbox size={13} /> Paused — needs you
+            <button onClick={skipApp} title="Skip this application" style={{ marginLeft: 'auto', ...btn, fontSize: 11, padding: '3px 9px', color: 'var(--muted,#888)' }}><SkipForward size={12} /> Skip this app</button>
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{firstNeed.label}</div>
+          <div style={{ fontSize: 11, color: 'var(--muted,#888)', marginBottom: 10 }}>{firstNeed.hint ? firstNeed.hint + ' · ' : ''}affects {firstNeed.jobCount} job{firstNeed.jobCount === 1 ? '' : 's'} · I'll remember your answer for next time</div>
+          {firstNeed.options && firstNeed.options.length ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {firstNeed.options.map((o) => <button key={o} style={{ ...btn, fontWeight: 700 }} disabled={busy} onClick={() => answer(o)}>{o}</button>)}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input autoFocus style={{ ...input, flex: 1 }} value={ans} onChange={(e) => setAns(e.target.value)} placeholder="Type your answer…" onKeyDown={(e) => { if (e.key === 'Enter') answer(ans); }} />
+              <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} disabled={busy} onClick={() => answer(ans)}><Check size={13} /> Save &amp; continue</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* live view mounts (+ co-pilot panel when open) */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <ViewMount r={slot0} tint={split ? '#f23a17' : undefined} />
         {split && <ViewMount r={slot1} tint="#1f78c8" />}
       </div>
 
-      {/* action bar */}
+      {/* action bar (the needs prompt is the prominent banner above the live view) */}
       <div style={{ borderTop: '1px solid var(--line,rgba(0,0,0,.11))', background: 'var(--bg,#fff)', padding: '11px 16px', display: 'flex', alignItems: 'center', gap: 10, minHeight: 56 }}>
-        {firstNeed ? (
-          <>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{firstNeed.label}</div>
-              <div style={{ fontSize: 11, color: 'var(--muted,#888)' }}>affects {firstNeed.jobCount} job{firstNeed.jobCount === 1 ? '' : 's'} · remembered</div>
-            </div>
-            {firstNeed.options && firstNeed.options.length ? firstNeed.options.map((o) => (
-              <button key={o} style={btn} disabled={busy} onClick={() => answer(o)}>{o}</button>
-            )) : (
-              <>
-                <input style={{ ...input, width: 200 }} value={ans} onChange={(e) => setAns(e.target.value)} placeholder="Your answer" onKeyDown={(e) => { if (e.key === 'Enter') answer(ans); }} />
-                <button style={{ ...btn, background: 'var(--ink,#111)', color: '#fff', borderColor: 'var(--ink,#111)' }} disabled={busy} onClick={() => answer(ans)}><Check size={13} /> Save</button>
-              </>
-            )}
-            {running && <button title="Skip this application — save it under your started-not-finished vault" style={{ ...btn, color: 'var(--muted,#888)' }} onClick={skipApp}><SkipForward size={13} /> Skip app</button>}
-          </>
-        ) : surfacedSel ? (
+        {surfacedSel ? (
           <>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 700 }}>{surfacedSel.company || 'Unknown'} — {surfacedSel.title || 'Role'}</div>

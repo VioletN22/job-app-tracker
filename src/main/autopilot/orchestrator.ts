@@ -60,6 +60,8 @@ function counts(): Record<AutopilotJobState, number> {
 function emitStatus(deps: DriveDeps, message: string, currentJobId: string | null = null): void {
   deps.emit({ running, paused, message, currentJobId, counts: counts() });
 }
+// Push the current status right now (so Pause/Stop/Resume feel instant).
+export function pingStatus(deps: DriveDeps, message: string): void { emitStatus(deps, message); }
 
 // Wait while the user decides on the app currently being filled: they answer the
 // parked question(s) (→ 'answered', resume same app), skip it (→ 'skip', defer it),
@@ -202,8 +204,9 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
       catch { res = null; }
 
       if (!res) { if (step === 0) throw new Error('no form / page blocked (login or captcha?)'); break; }
+      if (res.opening) { await sleep(rand(1200, 2200)); continue; } // Easy Apply modal opening
       if (res.noForm) {
-        if (step === 0) throw new Error('no application form found (external apply or login wall?)');
+        if (step === 0) throw new Error('no application form found (external apply — open it yourself)');
         break;
       }
       totalFilled += res.filled || 0;

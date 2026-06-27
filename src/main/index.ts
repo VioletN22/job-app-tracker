@@ -87,7 +87,7 @@ import { parseRepoRef } from './autopilot/github-jobs';
 import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
 import {
   runDrive, runFull, harvest, stopDrive, approveJob, approveAll, isDriveRunning,
-  pauseDrive, resumeDrive, skipCurrent, isPaused, openForApply, markApplied,
+  pauseDrive, resumeDrive, skipCurrent, isPaused, openForApply, markApplied, pingStatus,
   setSlotCount, getSlotCount, DriveDeps,
 } from './autopilot/orchestrator';
 import { BOARDS, boardMode } from './autopilot/sources';
@@ -566,9 +566,9 @@ ipcMain.handle('autopilot:drive:enqueue', async (_e, urls: string[]) => {
   return { added: added.length, jobs: getAutopilotJobs() };
 });
 ipcMain.handle('autopilot:drive:run', async () => { runDrive(driveDeps); return { ok: true }; });
-ipcMain.handle('autopilot:drive:stop', async () => { stopDrive(); return { ok: true }; });
-ipcMain.handle('autopilot:drive:pause', async () => { pauseDrive(); return { paused: isPaused() }; });
-ipcMain.handle('autopilot:drive:resume', async () => { resumeDrive(); return { paused: isPaused() }; });
+ipcMain.handle('autopilot:drive:stop', async () => { stopDrive(); pingStatus(driveDeps, 'Stopping…'); return { ok: true }; });
+ipcMain.handle('autopilot:drive:pause', async () => { pauseDrive(); pingStatus(driveDeps, 'Paused'); return { paused: isPaused() }; });
+ipcMain.handle('autopilot:drive:resume', async () => { resumeDrive(); pingStatus(driveDeps, 'Resuming…'); return { paused: isPaused() }; });
 ipcMain.handle('autopilot:drive:skip', async () => { skipCurrent(); return { ok: true }; });
 ipcMain.handle('autopilot:drive:resumeDeferred', async () => ({ requeued: requeueDeferred() }));
 // Find-mode: open a surfaced job in the workspace to apply, then mark it applied.
