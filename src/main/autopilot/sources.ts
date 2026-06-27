@@ -174,24 +174,27 @@ export const BOARDS: Board[] = [
     note: 'Grad / junior roles (1,100+). Logins + custom forms, so aplyd finds the best fits for you to open & apply.',
     buildUrl: (q, l) => `https://au.gradconnection.com/jobs/?keywords=${enc(q)}${l ? `&locations=${enc(l)}` : ''}`,
     scrape: {
-      anchor: 'a[href*="/jobs/"], a[href*="/employers/"][href*="/jobs/"]',
-      card: '.box-content, .campaign-box, article, li',
-      title: 'h2, h3, .box-header-title',
-      company: '.employer-title, .box-header-employer, .company',
-      location: '.box-location, .location',
+      // verified against live SSR HTML (2026-06-27)
+      anchor: 'a.box-header-title',
+      card: '.box_container, .box-content, article, li',
+      title: 'a.box-header-title, .box-header-title',
+      company: '.box-employer-name',
+      location: '.location-name',
       source: 'gradconnection',
     },
   },
   {
     id: 'prosple', label: 'Prosple', granularity: 'none', mode: 'find', region: 'AU', login: true,
     note: 'AU graduate programs + internships (1,700+), deadline-driven.',
-    buildUrl: (q, l) => `https://au.prosple.com/search?keywords=${enc(q)}${l ? `&locations=${enc(l)}` : ''}`,
+    // correct search path is /search-jobs (jobs render client-side; the embedded
+    // browser sees them after JS — selectors best-effort, tune on first real run)
+    buildUrl: (q, l) => `https://au.prosple.com/search-jobs?keywords=${enc(q)}${l ? `&locations=${enc(l)}` : ''}`,
     scrape: {
       anchor: 'a[href*="/graduate-employers/"][href*="/jobs"], a[href*="/job/"], h3 a, h2 a',
-      card: 'article, .SearchResult, li',
+      card: 'article, [class*="SearchResult"], [class*="card"], li',
       title: 'h2, h3',
-      company: '.employer, .company',
-      location: '.location',
+      company: '[class*="employer"], [class*="company"]',
+      location: '[class*="location"]',
       source: 'prosple',
     },
   },
