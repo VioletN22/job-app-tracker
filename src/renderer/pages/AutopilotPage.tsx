@@ -51,7 +51,7 @@ type CoreData = { answers: AnswerBankEntry[]; docs: LockerDocument[]; notes: Voi
 const STATE_DOT: Record<string, string> = {
   filling: '#c08a25', needs_input: '#c08a25', ready: '#f23a17', approved: '#f23a17',
   submitting: '#f23a17', submitted: '#1f9d55', logged: '#1f9d55', queued: '#c7c3bb',
-  skipped: '#c7c3bb', deferred: '#7c6f9c', failed: '#c0392b',
+  skipped: '#c7c3bb', deferred: '#7c6f9c', surfaced: '#1f78c8', failed: '#c0392b',
 };
 const SITE_LABEL: Record<string, string> = {
   linkedin: 'LinkedIn', indeed: 'Indeed', seek: 'Seek', glassdoor: 'Glassdoor',
@@ -203,6 +203,32 @@ const SourcesRail: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; sear
           )}
         </div>
         <Smart label="Ready to submit" color="#f23a17" count={readyCount} jb={jobs.filter((j) => j.state === 'ready')} />
+        {/* Ready to apply — find-mode jobs; clicking opens them in the workspace */}
+        {(() => {
+          const surfaced = jobs.filter((j) => j.state === 'surfaced');
+          return (
+            <div style={{ marginBottom: 2 }}>
+              <div onClick={() => toggle('smart:surfaced')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 8, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#1f78c8' }} />Ready to apply
+                <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--muted,#888)', background: 'rgba(0,0,0,.06)', borderRadius: 20, padding: '1px 7px', fontWeight: 700 }}>{surfaced.length}</span>
+              </div>
+              {open['smart:surfaced'] && (
+                <div style={{ marginLeft: 14 }}>
+                  {surfaced.length === 0
+                    ? <div style={{ fontSize: 11, color: 'var(--muted,#888)', padding: '4px 6px' }}>Nothing surfaced yet.</div>
+                    : surfaced.map((j) => (
+                      <div key={j.id} title="Open in workspace to apply" onClick={() => { onSelect(j.id); drive().openForApply(j.id); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 7, cursor: 'pointer', fontSize: 12, background: selectedId === j.id ? 'rgba(31,120,200,.1)' : 'transparent' }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#1f78c8', flex: 'none' }} />
+                        <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(j.company || 'Unknown') + ' — ' + (j.title || 'Role')}</span>
+                        {j.fitScore != null && <span style={{ fontSize: 9, color: 'var(--muted,#888)' }}>{j.fitScore}</span>}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
       <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted,#888)', padding: '10px 13px 4px' }}>By {group}</div>
       <div style={{ overflow: 'auto', padding: '0 9px 8px', flex: 1 }}>
@@ -270,6 +296,9 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   const queuedCount = jobs.filter((j) => j.state === 'queued').length;
   const failedCount = jobs.filter((j) => j.state === 'failed').length;
   const deferredCount = jobs.filter((j) => j.state === 'deferred').length;
+  const surfacedSel = selected && selected.state === 'surfaced' ? selected : null;
+  const openApply = (id: string) => drive().openForApply(id);
+  const markApplied = async (id: string) => { setBusy(true); await drive().markApplied(id); await reload(); setBusy(false); };
   const approve = async (id: string) => { setBusy(true); await drive().approve(id); await reload(); setBusy(false); };
   const approveAll = async () => { setBusy(true); await drive().approveAll(); await reload(); setBusy(false); };
   const answer = async (v: string) => { if (!firstNeed || !v.trim()) return; setBusy(true); await drive().answerNeed(firstNeed.id, v.trim()); setAns(''); await reload(); setBusy(false); };
@@ -353,6 +382,15 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
             )}
             {running && <button title="Skip this application — save it under your started-not-finished vault" style={{ ...btn, color: 'var(--muted,#888)' }} onClick={skipApp}><SkipForward size={13} /> Skip app</button>}
           </>
+        ) : surfacedSel ? (
+          <>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{surfacedSel.company || 'Unknown'} — {surfacedSel.title || 'Role'}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted,#888)' }}>find-mode · opened in the workspace · finish &amp; submit, then mark applied</div>
+            </div>
+            <button style={btn} disabled={busy} onClick={() => openApply(surfacedSel.id)}><Search size={13} /> Re-open</button>
+            <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} disabled={busy} onClick={() => markApplied(surfacedSel.id)}><Check size={13} /> Mark applied</button>
+          </>
         ) : nextReady ? (
           <>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -420,9 +458,122 @@ const CoPilotDock: React.FC = () => {
 };
 
 // ── Core rail (right): everything aplyd knows ────────────────────────────────
+// ── Sources tab + Browse catalog ─────────────────────────────────────────────
+type SourceItem = { id: string; label: string; region: string; login: boolean; note: string; granularity: string; mode: 'auto' | 'find'; enabled: boolean };
+const ModeChip: React.FC<{ mode: 'auto' | 'find'; onClick?: () => void }> = ({ mode, onClick }) => (
+  <span onClick={onClick} title={onClick ? 'Switch mode' : ''}
+    style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', padding: '3px 8px', borderRadius: 6, cursor: onClick ? 'pointer' : 'default', flex: 'none',
+      background: mode === 'auto' ? 'rgba(31,157,85,.13)' : 'rgba(31,120,200,.13)', color: mode === 'auto' ? '#1f9d55' : '#1f78c8' }}>{mode === 'auto' ? 'Auto' : 'Find'}</span>
+);
+const freshText = (g: string) => g === 'minute' ? 'to the minute' : g === 'day' ? 'daily fresh' : 'newest first';
+
+const SourcesPanel: React.FC = () => {
+  const [cat, setCat] = useState<SourceItem[]>([]);
+  const [browse, setBrowse] = useState(false);
+  const load = async () => setCat(await window.electronAPI.sources.catalog());
+  useEffect(() => { load(); }, []);
+  const toggleEnabled = async (id: string, on: boolean) => {
+    const s = await window.electronAPI.settings.get();
+    const dis = new Set(s.disabledBoards || []);
+    if (on) dis.delete(id); else dis.add(id);
+    await window.electronAPI.settings.set({ disabledBoards: [...dis] });
+    load();
+  };
+  const setMode = async (id: string, m: 'auto' | 'find') => { await window.electronAPI.sources.setMode(id, m); load(); };
+  const enabled = cat.filter((c) => c.enabled);
+  return (
+    <section style={card}>
+      <SectionHead icon={<Search size={15} />} title="Sources" count={enabled.length} />
+      <p style={{ fontSize: 12, opacity: 0.6, marginTop: 0 }}>Sites autopilot uses. <b>Auto</b> = it fills + you approve. <b>Find</b> = it surfaces fresh fits for you to open &amp; apply.</p>
+      {enabled.map((c) => (
+        <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 0', borderTop: '1px solid var(--ink, rgba(0,0,0,.07))' }}>
+          <input type="checkbox" checked={c.enabled} onChange={(e) => toggleEnabled(c.id, e.target.checked)} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>{c.label}{c.region === 'AU' && <span style={{ ...tagChip, borderColor: 'rgba(31,120,200,.5)', color: '#1f78c8' }}>AU</span>}</div>
+            <div style={{ fontSize: 10, opacity: 0.55 }}>{c.login ? 'login · ' : ''}{freshText(c.granularity)}</div>
+          </div>
+          <ModeChip mode={c.mode} onClick={() => setMode(c.id, c.mode === 'auto' ? 'find' : 'auto')} />
+        </div>
+      ))}
+      {enabled.length === 0 && <Empty>No sources on. Browse to enable some.</Empty>}
+      <button style={{ ...btn, width: '100%', justifyContent: 'center', marginTop: 11 }} onClick={() => setBrowse(true)}><Plus size={14} /> Browse all sources</button>
+      {browse && <BrowseSourcesModal cat={cat} onToggle={toggleEnabled} onMode={setMode} onClose={() => setBrowse(false)} />}
+    </section>
+  );
+};
+
+const BrowseSourcesModal: React.FC<{ cat: SourceItem[]; onToggle: (id: string, on: boolean) => void; onMode: (id: string, m: 'auto' | 'find') => void; onClose: () => void }> = ({ cat, onToggle, onMode, onClose }) => {
+  const Group: React.FC<{ title: string; color: string; sub: string; items: SourceItem[] }> = ({ title, color, sub, items }) => (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 8px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted,#888)' }}>
+        <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 7px', borderRadius: 5, color: '#fff', background: color }}>{title}</span>{sub}
+      </div>
+      {items.map((c) => (
+        <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 11, padding: '10px 11px', border: '1px solid var(--line,rgba(0,0,0,.12))', borderRadius: 10, marginBottom: 7, background: '#faf9f6' }}>
+          <input type="checkbox" checked={c.enabled} onChange={(e) => onToggle(c.id, e.target.checked)} style={{ marginTop: 3 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>{c.label}
+              {c.region === 'AU' && <span style={{ ...tagChip, borderColor: 'rgba(31,120,200,.5)', color: '#1f78c8' }}>AU</span>}
+              {c.login && <span style={{ ...tagChip, borderColor: 'rgba(192,138,37,.5)', color: '#c08a25' }}>login</span>}</div>
+            {c.note && <div style={{ fontSize: 11, color: 'var(--muted,#888)', marginTop: 3, lineHeight: 1.45 }}>{c.note}</div>}
+          </div>
+          <ModeChip mode={c.mode} onClick={() => onMode(c.id, c.mode === 'auto' ? 'find' : 'auto')} />
+        </div>
+      ))}
+    </>
+  );
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(20,18,16,.42)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 560, maxWidth: '92vw', maxHeight: '82vh', background: 'var(--bg,#fff)', border: '1px solid var(--line,rgba(0,0,0,.15))', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 60px rgba(0,0,0,.4)' }}>
+        <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--line,rgba(0,0,0,.12))', background: 'var(--panel,#f4f3ef)', display: 'flex', alignItems: 'center' }}>
+          <h3 style={{ margin: 0, fontSize: 14 }}>Browse sources</h3>
+          <button onClick={onClose} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted,#888)', fontSize: 16 }}>✕</button>
+        </div>
+        <div style={{ overflow: 'auto', padding: '4px 16px 16px' }}>
+          <Group title="Auto-apply" color="#1f9d55" sub="agent fills, you approve before submit" items={cat.filter((c) => c.mode === 'auto')} />
+          <Group title="Find &amp; surface" color="#1f78c8" sub="agent finds fresh fits, you open &amp; apply" items={cat.filter((c) => c.mode === 'find')} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Resumes tab (multiple variants; agent picks per job) ─────────────────────
+const ResumesPanel: React.FC<{ docs: LockerDocument[]; reload: () => void }> = ({ docs, reload }) => {
+  const resumes = docs.filter((d) => d.tags.includes('resume'));
+  const add = async () => {
+    const fp = await window.electronAPI.autopilot.pickDocument();
+    if (!fp) return;
+    const label = (fp.split('/').pop() || 'Resume').replace(/\.[^.]+$/, '');
+    await window.electronAPI.autopilot.addDocument(label, fp, ['resume'], resumes.length === 0);
+    reload();
+  };
+  return (
+    <section style={card}>
+      <SectionHead icon={<FileText size={15} />} title="Resumes" count={resumes.length}
+        action={<button style={btn} onClick={add}><Plus size={14} /> Add</button>} />
+      <p style={{ fontSize: 12, opacity: 0.6, marginTop: 0 }}>Keep a variant per angle (e.g. <b>Software</b>, <b>Ecommerce / Shopify</b>). The agent picks the best-matching one per job; the default is the fallback.</p>
+      {resumes.length === 0 && <Empty>No resume yet. Add your main one (and an ecommerce variant when ready).</Empty>}
+      {resumes.map((d) => (
+        <Row key={d.id} onDelete={async () => { await window.electronAPI.autopilot.deleteDocument(d.id); reload(); }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, flex: 1, minWidth: 0 }}>{d.label}</div>
+            {d.isDefault
+              ? <span style={{ ...tagChip, borderColor: 'rgba(242,58,23,.5)', color: 'var(--accent,#f23a17)' }}>default</span>
+              : <button style={{ ...btn, fontSize: 11, padding: '3px 8px' }} onClick={async () => { await window.electronAPI.autopilot.setDocumentDefault(d.id); reload(); }}>Make default</button>}
+          </div>
+          <div style={{ fontSize: 11, opacity: 0.5 }}>{d.filePath.split('/').pop()}</div>
+        </Row>
+      ))}
+    </section>
+  );
+};
+
 const CORE_TABS = [
   { id: 'profile', label: 'Profile' },
   { id: 'answers', label: 'Answers' },
+  { id: 'resumes', label: 'Resumes' },
+  { id: 'sources', label: 'Sources' },
   { id: 'assets', label: 'Assets' },
   { id: 'voice', label: 'Voice' },
   { id: 'letters', label: 'Letters' },
@@ -474,6 +625,8 @@ const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; r
       <div style={{ overflow: 'auto', padding: '10px 12px 16px', flex: 1 }}>
         {tab === 'profile' && <ProfileSection />}
         {tab === 'answers' && <AnswerBankSection answers={core.answers} reload={core.reload} />}
+        {tab === 'sources' && <SourcesPanel />}
+        {tab === 'resumes' && <ResumesPanel docs={core.docs} reload={core.reload} />}
         {tab === 'assets' && <>
           <DocumentLockerSection docs={core.docs} reload={core.reload} />
           <PortfolioSection links={core.links} reload={core.reload} />
@@ -524,7 +677,7 @@ const CoreRail: React.FC<{ core: CoreData; settings: AutopilotSettings | null; r
 const STATE_LABEL: Record<string, string> = {
   queued: 'Queued', filling: 'Filling', needs_input: 'Needs you', ready: 'Ready',
   approved: 'Approving', submitting: 'Submitting', submitted: 'Submitted',
-  logged: 'Logged', skipped: 'Skipped', deferred: 'Saved', failed: 'Failed',
+  logged: 'Logged', skipped: 'Skipped', deferred: 'Saved', surfaced: 'Ready to apply', failed: 'Failed',
 };
 
 const BOARD_OPTS = [

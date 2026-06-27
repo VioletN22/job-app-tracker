@@ -204,6 +204,7 @@ export function initializeDatabase(): void {
       fit_score INTEGER,
       fit_reason TEXT,
       source TEXT,
+      mode TEXT NOT NULL DEFAULT 'auto',
       filled_count INTEGER NOT NULL DEFAULT 0,
       needs_count INTEGER NOT NULL DEFAULT 0,
       screenshot_path TEXT,
@@ -284,6 +285,7 @@ function runMigrations(): void {
   // Autopilot fit-scoring columns for DBs created before Phase 2.
   try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN fit_reason TEXT`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN source TEXT`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'auto'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE saved_searches ADD COLUMN max_age_minutes INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
 
   // One-time backfill: stamp every application that predates the job_source
@@ -1067,6 +1069,18 @@ export function addDocument(label: string, filePath: string, tags: string[], isD
   return rowToDoc(db.prepare('SELECT * FROM locker_documents WHERE id=?').get(id));
 }
 
+// Make a document the default for its first tag (e.g. the default resume variant).
+export function setDocumentDefault(id: string): void {
+  const db = getDatabase();
+  const doc = db.prepare('SELECT tags FROM locker_documents WHERE id=?').get(id) as any;
+  if (!doc) return;
+  const tag0 = (JSON.parse(doc.tags || '[]')[0]) || '';
+  for (const d of getDocuments()) {
+    if (d.id !== id && d.tags[0] === tag0 && d.isDefault) db.prepare('UPDATE locker_documents SET is_default=0 WHERE id=?').run(d.id);
+  }
+  db.prepare('UPDATE locker_documents SET is_default=1 WHERE id=?').run(id);
+}
+
 export function deleteDocument(id: string): void {
   getDatabase().prepare('DELETE FROM locker_documents WHERE id=?').run(id);
 }
@@ -1147,7 +1161,7 @@ function rowToJob(r: any): AutopilotJob {
   return {
     id: r.id, url: r.url, company: r.company ?? null, title: r.title ?? null,
     state: r.state, fitScore: r.fit_score ?? null, fitReason: r.fit_reason ?? null,
-    source: r.source ?? null,
+    source: r.source ?? null, mode: (r.mode === 'find' ? 'find' : 'auto'),
     filledCount: r.filled_count ?? 0, needsCount: r.needs_count ?? 0,
     screenshotPath: r.screenshot_path ?? null, error: r.error ?? null,
     createdAt: r.created_at, updatedAt: r.updated_at,
@@ -1183,7 +1197,7 @@ export function updateJob(id: string, patch: Partial<AutopilotJob>): void {
   const db = getDatabase();
   const map: Record<string, string> = {
     url: 'url', company: 'company', title: 'title', state: 'state',
-    fitScore: 'fit_score', fitReason: 'fit_reason', source: 'source',
+    fitScore: 'fit_score', fitReason: 'fit_reason', source: 'source', mode: 'mode',
     filledCount: 'filled_count', needsCount: 'needs_count',
     screenshotPath: 'screenshot_path', error: 'error',
   };
@@ -1298,17 +1312,34 @@ export function isSameRoleKnown(company: string, title: string): boolean {
   return jobs.some((j) => normNeed(j.company || '') === c && normNeed(j.title || '') === t);
 }
 
-export function enqueuePosting(p: JobPosting, fitScore: number | null, fitReason: string | null): AutopilotJob | null {
+export function enqueuePosting(p: JobPosting, fitScore: number | null, fitReason: string | null, mode: 'auto' | 'find' = 'auto'): AutopilotJob | null {
   const db = getDatabase();
   const clean = (p.url || '').trim();
   if (!clean || isJobKnown(clean)) return null;
   if (isSameRoleKnown(p.company, p.title)) return null; // cross-posted duplicate
   const id = randomUUID();
   const now = new Date().toISOString();
-  db.prepare(`INSERT INTO autopilot_jobs (id, url, company, title, state, fit_score, fit_reason, source, created_at, updated_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, clean, p.company || null, p.title || null, 'queued', fitScore, fitReason, p.source || null, now, now);
+  // find-mode jobs go straight to 'surfaced' (you open & apply); auto → 'queued'.
+  const state = mode === 'find' ? 'surfaced' : 'queued';
+  db.prepare(`INSERT INTO autopilot_jobs (id, url, company, title, state, fit_score, fit_reason, source, mode, created_at, updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, clean, p.company || null, p.title || null, state, fitScore, fitReason, p.source || null, mode, now, now);
   return rowToJob(db.prepare('SELECT * FROM autopilot_jobs WHERE id=?').get(id));
+}
+
+// Find-mode jobs awaiting you to open & apply.
+export function getSurfacedJobs(): AutopilotJob[] {
+  return (getDatabase().prepare(`SELECT * FROM autopilot_jobs WHERE state='surfaced' ORDER BY fit_score DESC, created_at DESC`).all() as any[]).map(rowToJob);
+}
+
+// Per-board mode overrides (e.g. force a find board to attempt auto-apply).
+export function getBoardModes(): Record<string, string> {
+  try { const raw = getSetting('board_modes'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+}
+export function setBoardMode(boardId: string, mode: 'auto' | 'find' | 'default'): void {
+  const cur = getBoardModes();
+  if (mode === 'default') delete cur[boardId]; else cur[boardId] = mode;
+  setSetting('board_modes', JSON.stringify(cur));
 }
 
 // ── Saved searches ───────────────────────────────────────────────────────────

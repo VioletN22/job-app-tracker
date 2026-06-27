@@ -243,6 +243,7 @@ export type AutopilotJobState =
   | 'logged'      // recorded into the tracker
   | 'skipped'     // dropped (dupe / low fit)
   | 'deferred'    // you skipped it mid-fill — saved, started but not finished
+  | 'surfaced'    // find-mode board: found + scored, waiting for you to open & apply
   | 'failed';     // login wall / captcha / no form — see `error`
 
 export interface AutopilotJob {
@@ -254,6 +255,7 @@ export interface AutopilotJob {
   fitScore: number | null;       // 0-100 fit vs your profile (Phase 2)
   fitReason: string | null;      // one-line why, from the scorer
   source: string | null;         // which board/search it came from
+  mode: 'auto' | 'find';         // auto = agent fills; find = you open & apply
   filledCount: number;
   needsCount: number;            // open questions still blocking this job
   screenshotPath: string | null; // PNG of the filled draft for the review card

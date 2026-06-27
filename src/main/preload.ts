@@ -68,6 +68,7 @@ const electronAPI = {
     addDocument: (label: string, filePath: string, tags: string[], isDefault: boolean): Promise<LockerDocument> =>
       ipcRenderer.invoke('autopilot:addDocument', label, filePath, tags, isDefault),
     deleteDocument: (id: string) => ipcRenderer.invoke('autopilot:deleteDocument', id),
+    setDocumentDefault: (id: string) => ipcRenderer.invoke('autopilot:setDocumentDefault', id),
     getVoiceNotes: (): Promise<VoiceNote[]> => ipcRenderer.invoke('autopilot:getVoiceNotes'),
     addVoiceNote: (kind: VoiceNoteKind, note: string): Promise<VoiceNote> =>
       ipcRenderer.invoke('autopilot:addVoiceNote', kind, note),
@@ -98,6 +99,8 @@ const electronAPI = {
     resume: (): Promise<{ paused: boolean }> => ipcRenderer.invoke('autopilot:drive:resume'),
     skip: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:skip'),
     resumeDeferred: (): Promise<{ requeued: number }> => ipcRenderer.invoke('autopilot:drive:resumeDeferred'),
+    openForApply: (jobId: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('autopilot:drive:openForApply', jobId),
+    markApplied: (jobId: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:markApplied', jobId),
     getJobs: (): Promise<AutopilotJob[]> => ipcRenderer.invoke('autopilot:drive:getJobs'),
     getNeeds: (): Promise<AutopilotNeed[]> => ipcRenderer.invoke('autopilot:drive:getNeeds'),
     answerNeed: (id: string, value: string): Promise<{ ok: boolean; need: AutopilotNeed | null }> =>
@@ -142,6 +145,14 @@ const electronAPI = {
     setVisible: (visible: boolean) => ipcRenderer.invoke('autopilot:view:setVisible', visible),
     setSlots: (n: number): Promise<{ slots: number }> => ipcRenderer.invoke('autopilot:view:setSlots', n),
     getSlots: (): Promise<{ slots: number }> => ipcRenderer.invoke('autopilot:view:getSlots'),
+  },
+
+  // Source catalog (boards + modes)
+  sources: {
+    catalog: (): Promise<{ id: string; label: string; region: string; login: boolean; note: string; granularity: string; mode: 'auto' | 'find'; enabled: boolean }[]> =>
+      ipcRenderer.invoke('autopilot:sources:catalog'),
+    setMode: (boardId: string, mode: 'auto' | 'find' | 'default'): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('autopilot:sources:setMode', boardId, mode),
   },
 
   // AI related-role suggestions for the search box

@@ -12,7 +12,7 @@ import {
   ensureBrowser, openJob, injectSource, evalInTab, screenshot, closeTab, setActiveSlots, Tab, BridgeMsg,
 } from './driver';
 import { INJECTED_SOURCE } from './injected';
-import { harvestSearch, boardById, BOARDS } from './sources';
+import { harvestSearch, boardById, boardMode, BOARDS } from './sources';
 import { runClaudeCLI } from '../claude';
 import {
   resolveFieldPrompt, tailorAnswerPrompt, parseFieldAction, fitScorePrompt, parseFitScore,
@@ -22,6 +22,7 @@ import {
   getAnswerBank, getDocuments,
   getAutopilotJobs, getAutopilotJob, updateJob, upsertNeed, getOpenNeeds, lookupAnsweredNeed,
   getSavedSearches, enqueuePosting, isJobKnown, getAutopilotSettings, countLoggedToday,
+  getBoardModes,
 } from '../database';
 import type { AnswerBankEntry, AutopilotJob, AutopilotJobState, DriveStatus } from '../../shared/types';
 
@@ -50,7 +51,7 @@ async function waitIfPaused(): Promise<void> { while (paused && !cancelled) awai
 function counts(): Record<AutopilotJobState, number> {
   const base: Record<string, number> = {
     queued: 0, filling: 0, needs_input: 0, ready: 0, approved: 0,
-    submitting: 0, submitted: 0, logged: 0, skipped: 0, deferred: 0, failed: 0,
+    submitting: 0, submitted: 0, logged: 0, skipped: 0, deferred: 0, surfaced: 0, failed: 0,
   };
   for (const j of getAutopilotJobs()) base[j.state] = (base[j.state] || 0) + 1;
   return base as Record<AutopilotJobState, number>;
@@ -331,22 +332,24 @@ async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: nu
   const total = Math.min(runs.length, MAX_RUNS);
   const seen = new Set<string>();
   let idx = 0, scored = 0, enqueued = 0;
+  const modes = getBoardModes();
   for (const { board, s, term } of runs.slice(0, MAX_RUNS)) {
     if (cancelled || !board) break;
     if (remainingTarget() <= 0) { emitStatus(deps, 'Daily target reached — pausing search.'); break; }
     idx++;
-    emitStatus(deps, `Searching ${board.label}: ${term} (${idx}/${total}) · ${enqueued} queued`);
+    const mode = boardMode(board, modes); // 'auto' fills, 'find' surfaces
+    emitStatus(deps, `Searching ${board.label}: ${term} (${idx}/${total}) · ${enqueued} found`);
     let postings: any[] = [];
     try { postings = await harvestSearch(board, term, s.location, s.maxAgeMinutes, slot); } catch { postings = []; }
     const fresh = postings.filter((p) => { const k = (p.url || '').split('?')[0]; if (!k || seen.has(k) || isJobKnown(k)) return false; seen.add(k); return true; });
-    // score + enqueue as we go so the drive loop can pick them up immediately
+    // score + enqueue as we go so the drive loop can pick auto jobs up immediately
     for (const p of fresh) {
       if (cancelled || scored >= SCORE_BUDGET || remainingTarget() <= 0) break;
       const out = await runClaudeCLI(fitScorePrompt(p), 25000).catch(() => '');
       const { score, reason } = parseFitScore(out); scored++;
       if (score >= settings.minFit) {
-        const job = enqueuePosting(p, score, reason);
-        if (job) { enqueued++; emitStatus(deps, `Queued ${job.company || p.title || 'role'} (fit ${score})`); }
+        const job = enqueuePosting(p, score, reason, mode);
+        if (job) { enqueued++; emitStatus(deps, `${mode === 'find' ? 'Surfaced' : 'Queued'} ${job.company || p.title || 'role'} (fit ${score})`); }
       }
     }
     await sleep(rand(350, 800));
@@ -458,4 +461,35 @@ export async function approveAll(deps: DriveDeps): Promise<void> {
     await approveJob(j.id, deps);
     await sleep(rand(2500, 5000));
   }
+}
+
+// Find-mode: open a surfaced job in the workspace view, best-effort autofill one
+// pass, then hand it to the user (no auto-advance, no submit). Does NOT close the
+// tab — they finish + submit themselves, then "Mark applied".
+export async function openForApply(jobId: string, deps: DriveDeps): Promise<{ ok: boolean; error?: string }> {
+  const job = getAutopilotJob(jobId);
+  if (!job) return { ok: false, error: 'job not found' };
+  emitStatus(deps, `Opening ${job.company || 'job'} to apply…`, jobId);
+  try {
+    await ensureBrowser();
+    const tab = await openJob(job.url, handleBridge, 0); // slot 0 = visible workspace
+    const ctx = { company: job.company, title: job.title, jobText: '' };
+    if (await ensureInjected(tab, ctx)) {
+      try { await evalInTab(tab, 'window.AplydDrive.fillStep()'); } catch { /* page may need login first */ }
+    }
+    emitStatus(deps, `Opened ${job.company || 'job'} — finish & submit, then hit "Mark applied".`, jobId);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+// Record that the user applied to a surfaced job (logs into the tracker).
+export function markApplied(jobId: string, deps: DriveDeps): { ok: boolean } {
+  const job = getAutopilotJob(jobId);
+  if (!job) return { ok: false };
+  updateJob(jobId, { state: 'logged' });
+  try { deps.onApply(job.company || 'Unknown', job.title || 'Role', job.url); } catch { /* best effort */ }
+  emitStatus(deps, `Logged ${job.company || 'application'}`, jobId);
+  return { ok: true };
 }

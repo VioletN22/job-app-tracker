@@ -31,6 +31,12 @@ export interface Board {
   scrape: BoardScrape;
   // finest freshness this board honours, shown in the UI as a caveat
   granularity: 'minute' | 'day' | 'none';
+  // 'auto' = agent fills + you approve; 'find' = agent surfaces, you open & apply.
+  // Defaults to 'auto' when omitted.
+  mode?: 'auto' | 'find';
+  region?: 'AU' | 'global';
+  login?: boolean;   // applying needs a login (informational)
+  note?: string;     // shown in the catalog
 }
 
 // One generic scraper, parameterized per board. Returns plain JSON (serializable).
@@ -161,10 +167,71 @@ export const BOARDS: Board[] = [
       source: 'weworkremotely',
     },
   },
+
+  // ── AU early-career boards (FIND mode: surface, don't auto-fill) ────────────
+  {
+    id: 'gradconnection', label: 'GradConnection', granularity: 'none', mode: 'find', region: 'AU', login: true,
+    note: 'Grad / junior roles (1,100+). Logins + custom forms, so aplyd finds the best fits for you to open & apply.',
+    buildUrl: (q, l) => `https://au.gradconnection.com/jobs/?keywords=${enc(q)}${l ? `&locations=${enc(l)}` : ''}`,
+    scrape: {
+      anchor: 'a[href*="/jobs/"], a[href*="/employers/"][href*="/jobs/"]',
+      card: '.box-content, .campaign-box, article, li',
+      title: 'h2, h3, .box-header-title',
+      company: '.employer-title, .box-header-employer, .company',
+      location: '.box-location, .location',
+      source: 'gradconnection',
+    },
+  },
+  {
+    id: 'prosple', label: 'Prosple', granularity: 'none', mode: 'find', region: 'AU', login: true,
+    note: 'AU graduate programs + internships (1,700+), deadline-driven.',
+    buildUrl: (q, l) => `https://au.prosple.com/search?keywords=${enc(q)}${l ? `&locations=${enc(l)}` : ''}`,
+    scrape: {
+      anchor: 'a[href*="/graduate-employers/"][href*="/jobs"], a[href*="/job/"], h3 a, h2 a',
+      card: 'article, .SearchResult, li',
+      title: 'h2, h3',
+      company: '.employer, .company',
+      location: '.location',
+      source: 'prosple',
+    },
+  },
+  {
+    id: 'wellfound', label: 'Wellfound (startups)', granularity: 'none', mode: 'find', region: 'global', login: true,
+    note: 'Startups + smaller companies (ex-AngelList). Needs login; aplyd surfaces matches.',
+    buildUrl: (q, l) => `https://wellfound.com/jobs?q=${enc(q)}${l ? `&l=${enc(l)}` : ''}`,
+    scrape: {
+      anchor: 'a[href*="/jobs/"], a[href*="/company/"][href*="/jobs/"]',
+      card: 'div[data-test="JobSearchResult"], article, li',
+      title: 'h2, [data-test="job-title"]',
+      company: '[data-test="startup-link"], .company',
+      location: '.location',
+      source: 'wellfound',
+    },
+  },
+  {
+    id: 'hatch', label: 'Hatch (early-career, AU)', granularity: 'none', mode: 'find', region: 'AU', login: true,
+    note: 'AU early-career, skills/values matching.',
+    buildUrl: (q, l) => `https://www.hatch.team/jobs?search=${enc(q)}${l ? `&location=${enc(l)}` : ''}`,
+    scrape: {
+      anchor: 'a[href*="/jobs/"], a[href*="/job/"]',
+      card: 'article, .job-card, li',
+      title: 'h2, h3, .job-title',
+      company: '.company, .employer',
+      location: '.location',
+      source: 'hatch',
+    },
+  },
 ];
 
 export function boardById(id: string): Board | null {
   return BOARDS.find((b) => b.id === id) || null;
+}
+
+// A board's effective mode (default 'auto'); the user can override per board.
+export function boardMode(b: Board, overrides?: Record<string, string>): 'auto' | 'find' {
+  const o = overrides && overrides[b.id];
+  if (o === 'auto' || o === 'find') return o;
+  return b.mode || 'auto';
 }
 
 // Run one board search and return normalized postings (best-effort, capped).

@@ -49,6 +49,7 @@ import {
   getDocuments,
   addDocument,
   deleteDocument,
+  setDocumentDefault,
   getVoiceNotes,
   addVoiceNote,
   deleteVoiceNote,
@@ -72,15 +73,18 @@ import {
   deleteSavedSearch,
   getAutopilotSettings,
   setAutopilotSettings,
+  getBoardModes,
+  setBoardMode,
   getSetting,
   setSetting,
 } from './database';
 import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
 import {
   runDrive, runFull, harvest, stopDrive, approveJob, approveAll, isDriveRunning,
-  pauseDrive, resumeDrive, skipCurrent, isPaused,
+  pauseDrive, resumeDrive, skipCurrent, isPaused, openForApply, markApplied,
   setSlotCount, getSlotCount, DriveDeps,
 } from './autopilot/orchestrator';
+import { BOARDS, boardMode } from './autopilot/sources';
 import {
   shutdown as shutdownDriveBrowser, attachHost, setViewBounds, setViewsVisible,
 } from './autopilot/driver';
@@ -548,6 +552,21 @@ ipcMain.handle('autopilot:drive:pause', async () => { pauseDrive(); return { pau
 ipcMain.handle('autopilot:drive:resume', async () => { resumeDrive(); return { paused: isPaused() }; });
 ipcMain.handle('autopilot:drive:skip', async () => { skipCurrent(); return { ok: true }; });
 ipcMain.handle('autopilot:drive:resumeDeferred', async () => ({ requeued: requeueDeferred() }));
+// Find-mode: open a surfaced job in the workspace to apply, then mark it applied.
+ipcMain.handle('autopilot:drive:openForApply', async (_e, jobId: string) => openForApply(jobId, driveDeps));
+ipcMain.handle('autopilot:drive:markApplied', async (_e, jobId: string) => markApplied(jobId, driveDeps));
+// Source catalog: every board with mode/region/login + whether enabled.
+ipcMain.handle('autopilot:sources:catalog', async () => {
+  const settings = getAutopilotSettings();
+  const disabled = new Set(settings.disabledBoards || []);
+  const overrides = getBoardModes();
+  return BOARDS.map((b) => ({
+    id: b.id, label: b.label, region: b.region || 'global', login: !!b.login,
+    note: b.note || '', granularity: b.granularity, mode: boardMode(b, overrides),
+    enabled: !disabled.has(b.id),
+  }));
+});
+ipcMain.handle('autopilot:sources:setMode', async (_e, boardId: string, mode: 'auto' | 'find' | 'default') => { setBoardMode(boardId, mode); return { ok: true }; });
 ipcMain.handle('autopilot:drive:getJobs', async () => getAutopilotJobs());
 ipcMain.handle('autopilot:drive:getNeeds', async () => getOpenNeeds());
 ipcMain.handle('autopilot:drive:answerNeed', async (_e, id: string, value: string) => {
@@ -582,12 +601,18 @@ ipcMain.handle('autopilot:copilot:chat', async (_e, history: { role: string; con
   const searchLines = getSavedSearches().filter((s) => s.enabled)
     .map((s) => `- "${s.query}"${s.location ? ' in ' + s.location : ''}${s.maxAgeMinutes ? ' (≤' + s.maxAgeMinutes + 'm old)' : ''}`).join('\n') || '(none set yet)';
   const settings = getAutopilotSettings();
-  const allBoards = ['linkedin', 'indeed', 'seek', 'glassdoor', 'ziprecruiter', 'adzuna', 'jora', 'weworkremotely'];
-  const enabled = allBoards.filter((b) => !(settings.disabledBoards || []).includes(b)).join(', ') || '(none)';
+  const overrides = getBoardModes();
+  const disabled = new Set(settings.disabledBoards || []);
+  const enabledBoards = BOARDS.filter((b) => !disabled.has(b.id))
+    .map((b) => `${b.label} (${boardMode(b, overrides)}${b.region === 'AU' ? ', AU' : ''})`).join(', ') || '(none)';
+  const resumes = getDocuments().filter((d) => d.tags.includes('resume'))
+    .map((d) => `${d.label}${d.isDefault ? ' [default]' : ''}`).join(', ') || '(none uploaded)';
   const stateContext =
-    `Pipeline: ${by('queued')} queued, ${by('filling')} filling, ${by('needs_input')} need you, ${by('ready')} ready, ${by('submitted') + by('logged')} submitted, ${by('failed')} failed.\n` +
+    `Pipeline: ${by('queued')} queued, ${by('filling')} filling, ${by('needs_input')} need you, ${by('ready')} ready, ${by('surfaced')} ready-to-apply (find-mode), ${by('submitted') + by('logged')} submitted, ${by('deferred')} saved, ${by('failed')} failed.\n` +
     `Active searches:\n${searchLines}\n` +
-    `Enabled job sites: ${enabled}\nDaily target ${settings.dailyTarget}, min fit ${settings.minFit}.`;
+    `Enabled sources (auto=agent fills, find=you open & apply): ${enabledBoards}\n` +
+    `Resume variants on file: ${resumes}\n` +
+    `Daily target ${settings.dailyTarget}, min fit ${settings.minFit}.`;
   const reply = await runClaudeCLI(copilotPrompt(stateContext, Array.isArray(history) ? history.slice(-16) : []), 90000).catch(() => '');
   return { reply: reply.trim() || 'Sorry — I could not generate a reply just now.' };
 });
@@ -642,6 +667,7 @@ ipcMain.handle('autopilot:pickDocument', async () => {
 ipcMain.handle('autopilot:addDocument', async (_e, label: string, filePath: string, tags: string[], isDefault: boolean) =>
   addDocument(label, filePath, tags, isDefault));
 ipcMain.handle('autopilot:deleteDocument', async (_e, id: string) => { deleteDocument(id); return { ok: true }; });
+ipcMain.handle('autopilot:setDocumentDefault', async (_e, id: string) => { setDocumentDefault(id); return { ok: true }; });
 ipcMain.handle('autopilot:getVoiceNotes', async () => getVoiceNotes());
 ipcMain.handle('autopilot:addVoiceNote', async (_e, kind: string, note: string) => addVoiceNote(kind as any, note));
 ipcMain.handle('autopilot:deleteVoiceNote', async (_e, id: string) => { deleteVoiceNote(id); return { ok: true }; });
