@@ -206,7 +206,14 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
       if (!res) { if (step === 0) throw new Error('no form / page blocked (login or captcha?)'); break; }
       if (res.opening) { await sleep(rand(1200, 2200)); continue; } // Easy Apply modal opening
       if (res.noForm) {
-        if (step === 0) throw new Error('no application form found (external apply — open it yourself)');
+        if (step === 0) {
+          // No fillable form (external / off-site apply). Don't fail it — SURFACE it
+          // so you can open & apply in one click ("Ready to apply").
+          try { const shot = await screenshot(tab, job.id); updateJob(job.id, { screenshotPath: shot }); } catch { /* ignore */ }
+          updateJob(job.id, { state: 'surfaced', mode: 'find', error: null });
+          emitStatus(deps, `${company}: applies off-site → moved to "Ready to apply"`, job.id);
+          return;
+        }
         break;
       }
       totalFilled += res.filled || 0;
