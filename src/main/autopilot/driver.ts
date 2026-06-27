@@ -50,6 +50,9 @@ const lastBounds: { x: number; y: number; width: number; height: number }[] = [
 // Called from createWindow so the views can attach to the real app window.
 export function attachHost(win: BrowserWindow): void { hostWin = win; }
 
+// Bring the aplyd window forward (e.g. when a job needs your hands-on attention).
+export function focusHost(): void { if (hostWin) { try { hostWin.focus(); } catch { /* ignore */ } } }
+
 const ZERO = { x: 0, y: 0, width: 0, height: 0 };
 
 function makeSlot(index: number): Slot {
@@ -63,6 +66,9 @@ function makeSlot(index: number): Slot {
   });
   const slot: Slot = { view, bounds: { ...ZERO }, bridge: async () => ({ ok: false }) };
   const wc = view.webContents;
+  // External "Apply" links (target=_blank / window.open) load IN this view so the
+  // whole application stays inside aplyd instead of spawning a new window.
+  wc.setWindowOpenHandler(({ url }) => { try { if (/^https?:/.test(url)) wc.loadURL(url); } catch { /* ignore */ } return { action: 'deny' }; });
   try {
     wc.debugger.attach('1.3');
     wc.debugger.on('message', async (_e, method, params) => {

@@ -104,6 +104,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
   const [status, setStatus] = useState('Idle');
   const [activity, setActivity] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [split, setSplit] = useState(false);
 
   const reloadDrive = async () => {
@@ -116,6 +117,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
     reloadDrive();
     const off = drive().onProgress((st: DriveStatus) => {
       setRunning(st.running); setPaused(st.paused); setStatus(st.message);
+      setCurrentJobId(st.currentJobId);
       setActivity((a) => (a[a.length - 1] === st.message ? a : [...a, st.message]).slice(-7));
       drive().getJobs().then(setJobs); drive().getNeeds().then(setNeeds);
     });
@@ -131,7 +133,7 @@ const WorkspaceShell: React.FC<{ core: CoreData }> = ({ core }) => {
   return (
     <div style={{ position: 'fixed', top: 58, left: 'var(--nav-w, 256px)', right: 0, bottom: 0, display: 'flex', background: 'var(--bg)', color: 'var(--ink)', transition: 'left .18s ease' }}>
       <SourcesRail jobs={jobs} needs={needs} searches={searches} selectedId={selectedId} onSelect={setSelectedId} reload={reloadDrive} />
-      <WorkspacePane jobs={jobs} needs={needs} settings={settings} running={running} paused={paused} status={status} activity={activity} split={split} onSplit={setSplitMode} reload={reloadDrive} selected={selected} />
+      <WorkspacePane jobs={jobs} needs={needs} settings={settings} running={running} paused={paused} status={status} activity={activity} split={split} onSplit={setSplitMode} reload={reloadDrive} selected={selected} currentJobId={currentJobId} />
       <CoreRail core={core} settings={settings} reloadDrive={reloadDrive} />
     </div>
   );
@@ -261,7 +263,7 @@ const SourcesRail: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; sear
 };
 
 // ── Workspace (center): live embedded browser + action bar ───────────────────
-const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; settings: AutopilotSettings | null; running: boolean; paused: boolean; status: string; activity: string[]; split: boolean; onSplit: (on: boolean) => void; reload: () => void; selected: AutopilotJob | null }> = ({ jobs, needs, running, paused, status, activity, split, onSplit, reload, selected }) => {
+const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; settings: AutopilotSettings | null; running: boolean; paused: boolean; status: string; activity: string[]; split: boolean; onSplit: (on: boolean) => void; reload: () => void; selected: AutopilotJob | null; currentJobId: string | null }> = ({ jobs, needs, running, paused, status, activity, split, onSplit, reload, selected, currentJobId }) => {
   const slot0 = useRef<HTMLDivElement>(null);
   const slot1 = useRef<HTMLDivElement>(null);
   useViewBounds(slot0, 0, true);
@@ -299,6 +301,9 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   const failedCount = jobs.filter((j) => j.state === 'failed').length;
   const deferredCount = jobs.filter((j) => j.state === 'deferred').length;
   const surfacedSel = selected && selected.state === 'surfaced' ? selected : null;
+  // The job the agent just opened off-site and is now WAITING on you to finish in
+  // the workspace (it pauses the run until you hit Mark applied or Skip).
+  const activeApply = currentJobId ? (jobs.find((j) => j.id === currentJobId && j.state === 'surfaced') || null) : null;
   const openApply = (id: string) => drive().openForApply(id);
   const markApplied = async (id: string) => { setBusy(true); await drive().markApplied(id); await reload(); setBusy(false); };
   const approve = async (id: string) => { setBusy(true); await drive().approve(id); await reload(); setBusy(false); };
@@ -380,6 +385,19 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
               <button style={{ ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' }} disabled={busy} onClick={() => answer(ans)}><Check size={13} /> Save &amp; continue</button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* off-site application opened right here — go through it, then mark applied */}
+      {activeApply && (
+        <div style={{ margin: '10px 14px 0', padding: '12px 14px', border: '1.5px solid #1f78c8', borderRadius: 10, background: 'rgba(31,120,200,.06)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: '#1f78c8', marginBottom: 6 }}>
+            <Search size={13} /> Apply here — your turn
+            <button onClick={skipApp} title="Skip this one and move on" style={{ marginLeft: 'auto', ...btn, fontSize: 11, padding: '3px 9px', color: 'var(--muted,#888)' }}><SkipForward size={12} /> Skip this app</button>
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{activeApply.company || 'Unknown'} — {activeApply.title || 'Role'}</div>
+          <div style={{ fontSize: 11, color: 'var(--muted,#888)', marginBottom: 10 }}>This one applies on the company's own site. It's open in the window below — go through it step by step, hit their submit, then tell me you're done. The run waits for you.</div>
+          <button style={{ ...btn, background: '#1f78c8', color: '#fff', borderColor: '#1f78c8', fontWeight: 700 }} disabled={busy} onClick={() => markApplied(activeApply.id)}><Check size={13} /> Mark applied &amp; continue</button>
         </div>
       )}
 

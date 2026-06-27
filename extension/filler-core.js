@@ -73,6 +73,40 @@
   }
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+  // The text of a SINGLE choice option (a radio/checkbox), e.g. "Yes"/"No" — not
+  // the group question. Prefer the option's own label over the group legend.
+  function optionLabel(r) {
+    if (r.id) { const l = document.querySelector(`label[for="${CSS.escape(r.id)}"]`); if (l && l.innerText.trim()) return cleanLabel(l.innerText); }
+    const wrap = r.closest('label');
+    if (wrap) { const c = wrap.cloneNode(true); c.querySelectorAll('input,select,textarea').forEach((n) => n.remove()); const s = c.innerText.trim(); if (s) return cleanLabel(s); }
+    if (r.getAttribute('aria-label')) return cleanLabel(r.getAttribute('aria-label'));
+    const sib = r.nextElementSibling;
+    if (sib && sib.innerText && sib.innerText.trim().length <= 40) return cleanLabel(sib.innerText);
+    if (r.value && r.value.trim()) return r.value.trim();
+    return labelFor(r);
+  }
+  // The group question for a radio fieldset (its legend), not an option.
+  function groupQuestion(fs, radios) {
+    const leg = fs.querySelector('legend');
+    if (leg && leg.innerText.trim()) return cleanLabel(leg.innerText);
+    const q = labelFor(fs);
+    if (q) return q;
+    return radios && radios[0] ? labelFor(radios[0]) : '';
+  }
+  // Match a saved value to one of `labels` SAFELY: exact, then starts-with, then
+  // whole-word. Never a raw substring — so "No" can't match "now" in a "Yes" option.
+  function matchOption(labels, value) {
+    const v = String(value || '').trim().toLowerCase();
+    if (!v) return -1;
+    const norm = (l) => String(l || '').trim().toLowerCase();
+    let i = labels.findIndex((l) => norm(l) === v);
+    if (i >= 0) return i;
+    i = labels.findIndex((l) => norm(l).replace(/^[^a-z0-9]+/i, '').startsWith(v));
+    if (i >= 0) return i;
+    const re = new RegExp('\\b' + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+    return labels.findIndex((l) => re.test(l));
+  }
+
   // ---- field collection (works on any form root) ---------------------------
   function collectFields(root) {
     const out = [];
@@ -93,8 +127,8 @@
         if (seen.has(key)) return; seen.add(key);
         const radios = [...(fs || root).querySelectorAll('input[type="radio"]')].filter(isVisible)
           .filter((r) => !fs || r.name === el.name);
-        const options = radios.map((r) => labelFor(r)).filter(Boolean);
-        out.push({ el: fs || el, kind: 'radio', label: fs ? labelFor(radios[0] || el) : labelFor(el), options, radios });
+        const options = radios.map(optionLabel).filter(Boolean);
+        out.push({ el: fs || el, kind: 'radio', label: fs ? groupQuestion(fs, radios) : labelFor(el), options, radios });
       } else if (type === 'checkbox') {
         out.push({ el, kind: 'checkbox', label: labelFor(el), options: [] });
       } else if (type === 'file') {
@@ -121,7 +155,7 @@
   // the option text currently selected on a choice field (to compare vs a saved answer)
   function currentChoice(f) {
     if (f.kind === 'select') { const o = f.el.options[f.el.selectedIndex]; return o ? o.text.trim() : ''; }
-    if (f.kind === 'radio') { const r = (f.radios || []).find((x) => x.checked); return r ? labelFor(r) : ''; }
+    if (f.kind === 'radio') { const r = (f.radios || []).find((x) => x.checked); return r ? optionLabel(r) : ''; }
     return (f.el.value || '').trim();
   }
 
@@ -135,15 +169,15 @@
       // undefined → fall through to core defaults
     }
     if (f.kind === 'select') {
-      const opt = [...f.el.options].find((o) => o.text.trim().toLowerCase() === String(value).toLowerCase())
-        || [...f.el.options].find((o) => o.text.trim().toLowerCase().includes(String(value).toLowerCase()));
-      if (opt) { f.el.value = opt.value; f.el.dispatchEvent(new Event('change', { bubbles: true })); return true; }
+      const opts = [...f.el.options];
+      const idx = matchOption(opts.map((o) => o.text), value);
+      if (idx >= 0) { f.el.value = opts[idx].value; f.el.dispatchEvent(new Event('change', { bubbles: true })); return true; }
       return false;
     }
     if (f.kind === 'radio') {
-      const target = (f.radios || []).find((r) => labelFor(r).toLowerCase() === String(value).toLowerCase())
-        || (f.radios || []).find((r) => labelFor(r).toLowerCase().includes(String(value).toLowerCase()));
-      if (target) { target.click(); return true; }
+      const radios = f.radios || [];
+      const idx = matchOption(radios.map(optionLabel), value);
+      if (idx >= 0) { radios[idx].click(); return true; }
       return false;
     }
     setNativeValue(f.el, String(value));
@@ -199,9 +233,21 @@
       const GUARDED = ['focusin', 'focusout', 'keydown', 'keyup', 'keypress'];
       GUARDED.forEach((t) => window.addEventListener(t, guard, true));
 
+      // The host's modal has its own focus trap that yanks focus back into itself,
+      // so typing never reaches our input. Invert it: whenever focus lands OUTSIDE
+      // our popup, pull it straight back. Our popup becomes the focus owner, so the
+      // input is typeable immediately instead of going dead for a moment.
+      const field = () => wrap.querySelector('.aplyd-ask-input') || wrap.querySelector('.aplyd-ask-choice') || wrap.querySelector('.aplyd-ask-skip');
+      const recapture = (e) => {
+        if (!document.body.contains(wrap)) return;
+        if (!wrap.contains(e.target)) { const f = field(); if (f) f.focus(); }
+      };
+      document.addEventListener('focusin', recapture, true);
+
       const remember = wrap.querySelector('.aplyd-ask-remember input');
       const done = (val) => {
         GUARDED.forEach((t) => window.removeEventListener(t, guard, true));
+        document.removeEventListener('focusin', recapture, true);
         wrap.remove();
         resolve(val);
       };

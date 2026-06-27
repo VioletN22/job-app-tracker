@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import {
-  ensureBrowser, openJob, injectSource, evalInTab, screenshot, closeTab, setActiveSlots, Tab, BridgeMsg,
+  ensureBrowser, openJob, injectSource, evalInTab, screenshot, closeTab, setActiveSlots, focusHost, Tab, BridgeMsg,
 } from './driver';
 import { INJECTED_SOURCE } from './injected';
 import { harvestSearch, boardById, boardMode, BOARDS } from './sources';
@@ -73,6 +73,20 @@ async function waitForUser(pendingNorms: string[]): Promise<'answered' | 'skip' 
     await waitIfPaused();
     const open = new Set(getOpenNeeds().map((n) => n.normLabel));
     if (!pendingNorms.some((p) => open.has(p))) return 'answered';
+    await sleep(2000);
+  }
+  return 'skip';
+}
+
+// Wait while the user applies to an EXTERNAL job in the workspace: they finish on
+// the site + hit "Mark applied" (→ state logged) or Skip. Up to ~30 min.
+async function waitForApply(jobId: string): Promise<'applied' | 'skip' | 'cancel'> {
+  for (let i = 0; i < 900; i++) {
+    if (cancelled) return 'cancel';
+    if (skipRequested) { skipRequested = false; return 'skip'; }
+    await waitIfPaused();
+    const j = getAutopilotJob(jobId);
+    if (j && (j.state === 'logged' || j.state === 'submitted')) return 'applied';
     await sleep(2000);
   }
   return 'skip';
@@ -193,6 +207,7 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
 
     let totalFilled = 0;
     let reachedReview = false;
+    let triedExternal = false;   // have we already clicked through to the off-site form?
 
     for (let step = 0; step < MAX_STEPS; step++) {
       if (cancelled) break;
@@ -206,15 +221,30 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
       if (!res) { if (step === 0) throw new Error('no form / page blocked (login or captcha?)'); break; }
       if (res.opening) { await sleep(rand(1200, 2200)); continue; } // Easy Apply modal opening
       if (res.noForm) {
-        if (step === 0) {
-          // No fillable form (external / off-site apply). Don't fail it — SURFACE it
-          // so you can open & apply in one click ("Ready to apply").
-          try { const shot = await screenshot(tab, job.id); updateJob(job.id, { screenshotPath: shot }); } catch { /* ignore */ }
-          updateJob(job.id, { state: 'surfaced', mode: 'find', error: null });
-          emitStatus(deps, `${company}: applies off-site → moved to "Ready to apply"`, job.id);
-          return;
+        // No fillable form here. First try to click an "Apply" button that opens the
+        // real application — it loads IN this workspace view (setWindowOpenHandler),
+        // so the whole thing stays inside aplyd. Then re-scan for a form.
+        if (!triedExternal) {
+          let clicked = false;
+          try { clicked = await evalInTab(tab, 'window.AplydDrive.clickExternalApply()'); } catch { clicked = false; }
+          if (clicked) {
+            triedExternal = true;
+            emitStatus(deps, `Opening the application for ${company} right here…`, job.id);
+            await sleep(rand(3200, 4200));
+            continue; // re-scan the page that just loaded
+          }
         }
-        break;
+        // Still no form we can fill (true off-site flow, or a custom ATS). Open it in
+        // the workspace and hand it to you: go through it step-by-step, then hit
+        // "Mark applied" (or Skip). Everything happens inside aplyd.
+        try { const shot = await screenshot(tab, job.id); updateJob(job.id, { screenshotPath: shot }); } catch { /* ignore */ }
+        focusHost();
+        updateJob(job.id, { state: 'surfaced', mode: 'find', needsCount: 0, error: null });
+        emitStatus(deps, `${company}: apply in the window below, then hit “Mark applied” (or Skip)`, job.id);
+        const outcome = await waitForApply(job.id);
+        if (outcome === 'applied') return;                               // you logged it
+        if (outcome === 'skip') { updateJob(job.id, { state: 'deferred' }); emitStatus(deps, `Saved ${company} for later`, job.id); return; }
+        return;                                                          // cancel → leave surfaced
       }
       totalFilled += res.filled || 0;
       updateJob(job.id, { filledCount: totalFilled });

@@ -261,6 +261,17 @@ export const INJECTED_SOURCE = String.raw`
     }
     return false;
   }
+  // Click an EXTERNAL apply button (company site / off-LinkedIn). It loads in this
+  // same view (driver window-open handler), so the user can apply inside aplyd.
+  function clickExternalApply() {
+    var els = [].slice.call(document.querySelectorAll('a, button')).filter(isVisible);
+    for (var i = 0; i < els.length; i++) {
+      var t = (els[i].innerText || els[i].getAttribute('aria-label') || '').trim();
+      if (/easy apply/i.test(t)) continue;
+      if (/^apply\b|^apply now|apply on company|apply externally|apply for this job/i.test(t)) { els[i].click(); return true; }
+    }
+    return false;
+  }
 
   function buttonsIn(root) {
     var els = [].slice.call(root.querySelectorAll('button, [role="button"], input[type="submit"]'));
@@ -345,6 +356,7 @@ export const INJECTED_SOURCE = String.raw`
     fillStep: fillStep,
     clickFooter: clickFooter,
     footer: footer,
+    clickExternalApply: clickExternalApply,
     hasForm: function () { return !!getFormRoot(); },
   };
 })();
