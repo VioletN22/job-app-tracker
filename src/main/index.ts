@@ -69,6 +69,7 @@ import {
   requeueDeferred,
   getOpenNeeds,
   answerNeed,
+  dismissNeed,
   getSavedSearches,
   addSavedSearch,
   setSavedSearchEnabled,
@@ -596,6 +597,7 @@ ipcMain.handle('autopilot:drive:answerNeed', async (_e, id: string, value: strin
   const n = answerNeed(id, value);
   return { ok: !!n, need: n };
 });
+ipcMain.handle('autopilot:drive:dismissNeed', async (_e, id: string) => { dismissNeed(id); return { ok: true }; });
 ipcMain.handle('autopilot:drive:approve', async (_e, jobId: string) => approveJob(jobId, driveDeps));
 ipcMain.handle('autopilot:drive:approveAll', async () => { approveAll(driveDeps); return { ok: true }; });
 ipcMain.handle('autopilot:drive:deleteJob', async (_e, id: string) => { deleteAutopilotJob(id); return { ok: true }; });

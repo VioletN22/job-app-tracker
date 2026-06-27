@@ -365,7 +365,8 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
         <div style={{ margin: '10px 14px 0', padding: '12px 14px', border: '1.5px solid var(--accent,#f23a17)', borderRadius: 10, background: 'rgba(242,58,23,.05)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--accent,#f23a17)', marginBottom: 6 }}>
             <Inbox size={13} /> Paused — needs you
-            <button onClick={skipApp} title="Skip this application" style={{ marginLeft: 'auto', ...btn, fontSize: 11, padding: '3px 9px', color: 'var(--muted,#888)' }}><SkipForward size={12} /> Skip this app</button>
+            <button onClick={async () => { await drive().dismissNeed(firstNeed.id); reload(); }} title="Not a real question — discard it" style={{ marginLeft: 'auto', ...btn, fontSize: 11, padding: '3px 9px', color: 'var(--muted,#888)' }}>Not a question</button>
+            <button onClick={skipApp} title="Skip this application" style={{ ...btn, fontSize: 11, padding: '3px 9px', color: 'var(--muted,#888)' }}><SkipForward size={12} /> Skip this app</button>
           </div>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{firstNeed.label}</div>
           <div style={{ fontSize: 11, color: 'var(--muted,#888)', marginBottom: 10 }}>{firstNeed.hint ? firstNeed.hint + ' · ' : ''}affects {firstNeed.jobCount} job{firstNeed.jobCount === 1 ? '' : 's'} · I'll remember your answer for next time</div>
@@ -901,7 +902,10 @@ const NeedRow: React.FC<{ need: AutopilotNeed; onAnswered: () => void }> = ({ ne
   const save = async (v: string) => { if (!v.trim()) return; await drive().answerNeed(need.id, v.trim()); onAnswered(); };
   return (
     <div style={{ border: '1px solid var(--ink, rgba(0,0,0,.12))', borderRadius: 10, padding: 10, marginBottom: 8 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{need.label}</div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2, flex: 1 }}>{need.label}</div>
+        <button title="Not a real question — discard" onClick={async () => { await drive().dismissNeed(need.id); onAnswered(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted,#888)', fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
+      </div>
       <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 8 }}>
         affects {need.jobCount} queued job{need.jobCount === 1 ? '' : 's'}{need.hint ? ` · ${need.hint}` : ''} · remembered for next time
       </div>

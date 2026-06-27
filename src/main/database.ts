@@ -287,6 +287,9 @@ function runMigrations(): void {
   try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN source TEXT`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'auto'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE saved_searches ADD COLUMN max_age_minutes INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+  // Purge junk needs captured before the nav/search-field fix (e.g. a site's
+  // global "Search" box mistaken for a form field).
+  try { db.exec(`DELETE FROM autopilot_needs WHERE norm_label IN ('search','') OR norm_label LIKE 'search %'`); } catch { /* table may not exist yet */ }
 
   // One-time backfill: stamp every application that predates the job_source
   // field as 'LinkedIn' (where they were all sourced from). Gated on
@@ -1307,6 +1310,12 @@ export function answerNeed(id: string, value: string): AutopilotNeed | null {
   db.prepare(`UPDATE autopilot_needs SET status='answered', answer=?, answered_at=? WHERE id=?`).run(value, now, id);
   try { upsertAnswer({ label: need.label, value, patterns: [need.label] }); } catch { /* best effort */ }
   return rowToNeed(db.prepare('SELECT * FROM autopilot_needs WHERE id=?').get(id));
+}
+
+// Throw a question away without answering it (e.g. it was junk). Does NOT touch
+// the answer bank.
+export function dismissNeed(id: string): void {
+  getDatabase().prepare('DELETE FROM autopilot_needs WHERE id=?').run(id);
 }
 
 // ── Autopilot: harvesting + dedup ────────────────────────────────────────────

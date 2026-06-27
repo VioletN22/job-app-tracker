@@ -215,9 +215,11 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
       // Needs you on THIS application? PAUSE here and wait — don't move on. You can
       // answer (it resumes this same app with your answer) or skip it (it goes to
       // your "started, not finished" vault and the agent continues to the next).
-      if (res.needs && res.needs.length) {
-        for (const n of res.needs) upsertNeed({ label: n.label, kind: n.kind, options: n.options, hint: n.hint });
-        const pending = res.needs.map((n: any) => norm(n.label));
+      // drop junk (a stray site search box etc.) — never park "Search"/empty labels
+      const realNeeds = (res.needs || []).filter((n: any) => { const nl = norm(n.label); return nl && nl !== 'search' && !nl.startsWith('search '); });
+      if (realNeeds.length) {
+        for (const n of realNeeds) upsertNeed({ label: n.label, kind: n.kind, options: n.options, hint: n.hint });
+        const pending = realNeeds.map((n: any) => norm(n.label));
         updateJob(job.id, { state: 'needs_input', needsCount: pending.length });
         emitStatus(deps, `Paused on ${company} — answer below, or skip this one`, job.id);
         const outcome = await waitForUser(pending);
@@ -355,6 +357,8 @@ async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: nu
   const modes = getBoardModes();
   for (const { board, s, term } of runs.slice(0, MAX_RUNS)) {
     if (cancelled || !board) break;
+    await waitIfPaused();
+    if (cancelled) break;
     if (remainingTarget() <= 0) { emitStatus(deps, 'Daily target reached — pausing search.'); break; }
     idx++;
     const mode = boardMode(board, modes); // 'auto' fills, 'find' surfaces
@@ -380,6 +384,8 @@ async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: nu
   const repos = getGithubRepos();
   for (const r of repos) {
     if (cancelled || scored >= SCORE_BUDGET || remainingTarget() <= 0) break;
+    await waitIfPaused();
+    if (cancelled) break;
     emitStatus(deps, `Reading ${r.owner}/${r.repo} job list…`);
     let rjobs: any[] = [];
     try { rjobs = await fetchRepoJobs(r); } catch { rjobs = []; }
