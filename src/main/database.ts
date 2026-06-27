@@ -1069,6 +1069,16 @@ export function addDocument(label: string, filePath: string, tags: string[], isD
   return rowToDoc(db.prepare('SELECT * FROM locker_documents WHERE id=?').get(id));
 }
 
+// Per-resume "focus" notes (docId -> focus text), used to pick the best variant.
+export function getResumeFocus(): Record<string, string> {
+  try { const raw = getSetting('resume_focus'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+}
+export function setResumeFocus(docId: string, focus: string): void {
+  const m = getResumeFocus();
+  if (focus.trim()) m[docId] = focus.trim(); else delete m[docId];
+  setSetting('resume_focus', JSON.stringify(m));
+}
+
 // Make a document the default for its first tag (e.g. the default resume variant).
 export function setDocumentDefault(id: string): void {
   const db = getDatabase();

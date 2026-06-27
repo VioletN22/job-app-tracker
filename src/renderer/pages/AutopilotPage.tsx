@@ -541,6 +541,8 @@ const BrowseSourcesModal: React.FC<{ cat: SourceItem[]; onToggle: (id: string, o
 // ── Resumes tab (multiple variants; agent picks per job) ─────────────────────
 const ResumesPanel: React.FC<{ docs: LockerDocument[]; reload: () => void }> = ({ docs, reload }) => {
   const resumes = docs.filter((d) => d.tags.includes('resume'));
+  const [focus, setFocus] = useState<Record<string, string>>({});
+  useEffect(() => { window.electronAPI.autopilot.getResumeFocus().then(setFocus); }, [docs.length]);
   const add = async () => {
     const fp = await window.electronAPI.autopilot.pickDocument();
     if (!fp) return;
@@ -548,11 +550,12 @@ const ResumesPanel: React.FC<{ docs: LockerDocument[]; reload: () => void }> = (
     await window.electronAPI.autopilot.addDocument(label, fp, ['resume'], resumes.length === 0);
     reload();
   };
+  const saveFocus = (id: string, v: string) => { setFocus((f) => ({ ...f, [id]: v })); window.electronAPI.autopilot.setResumeFocus(id, v); };
   return (
     <section style={card}>
       <SectionHead icon={<FileText size={15} />} title="Resumes" count={resumes.length}
         action={<button style={btn} onClick={add}><Plus size={14} /> Add</button>} />
-      <p style={{ fontSize: 12, opacity: 0.6, marginTop: 0 }}>Keep a variant per angle (e.g. <b>Software</b>, <b>Ecommerce / Shopify</b>). The agent picks the best-matching one per job; the default is the fallback.</p>
+      <p style={{ fontSize: 12, opacity: 0.6, marginTop: 0 }}>Keep a variant per angle. The agent reads each variant's <b>focus</b> and attaches the best-matching one per job (default = fallback when only one fits).</p>
       {resumes.length === 0 && <Empty>No resume yet. Add your main one (and an ecommerce variant when ready).</Empty>}
       {resumes.map((d) => (
         <Row key={d.id} onDelete={async () => { await window.electronAPI.autopilot.deleteDocument(d.id); reload(); }}>
@@ -562,7 +565,9 @@ const ResumesPanel: React.FC<{ docs: LockerDocument[]; reload: () => void }> = (
               ? <span style={{ ...tagChip, borderColor: 'rgba(242,58,23,.5)', color: 'var(--accent,#f23a17)' }}>default</span>
               : <button style={{ ...btn, fontSize: 11, padding: '3px 8px' }} onClick={async () => { await window.electronAPI.autopilot.setDocumentDefault(d.id); reload(); }}>Make default</button>}
           </div>
-          <div style={{ fontSize: 11, opacity: 0.5 }}>{d.filePath.split('/').pop()}</div>
+          <input style={{ ...input, fontSize: 11, marginTop: 5 }} value={focus[d.id] || ''} placeholder='Focus (e.g. "full-stack software" / "ecommerce, Shopify, WooCommerce")'
+            onChange={(e) => setFocus((f) => ({ ...f, [d.id]: e.target.value }))} onBlur={(e) => saveFocus(d.id, e.target.value)} />
+          <div style={{ fontSize: 10, opacity: 0.45, marginTop: 3 }}>{d.filePath.split('/').pop()}</div>
         </Row>
       ))}
     </section>

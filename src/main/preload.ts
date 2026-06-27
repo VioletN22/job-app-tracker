@@ -69,6 +69,8 @@ const electronAPI = {
       ipcRenderer.invoke('autopilot:addDocument', label, filePath, tags, isDefault),
     deleteDocument: (id: string) => ipcRenderer.invoke('autopilot:deleteDocument', id),
     setDocumentDefault: (id: string) => ipcRenderer.invoke('autopilot:setDocumentDefault', id),
+    getResumeFocus: (): Promise<Record<string, string>> => ipcRenderer.invoke('autopilot:getResumeFocus'),
+    setResumeFocus: (docId: string, focus: string) => ipcRenderer.invoke('autopilot:setResumeFocus', docId, focus),
     getVoiceNotes: (): Promise<VoiceNote[]> => ipcRenderer.invoke('autopilot:getVoiceNotes'),
     addVoiceNote: (kind: VoiceNoteKind, note: string): Promise<VoiceNote> =>
       ipcRenderer.invoke('autopilot:addVoiceNote', kind, note),

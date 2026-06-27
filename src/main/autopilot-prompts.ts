@@ -285,6 +285,25 @@ export function parseRoles(out: string): string[] {
   return [];
 }
 
+// Pick which resume variant best fits a job (used when a resume upload appears
+// and the user keeps multiple variants, e.g. software vs ecommerce).
+export function resumePickPrompt(variants: { label: string; focus: string }[], job: { title?: string; jobText?: string }): string {
+  const list = variants.map((v, i) => `${i}: "${v.label}"${v.focus ? ` — focus: ${v.focus}` : ''}`).join('\n');
+  return (
+    `Pick which resume variant best fits this job. Choose the one whose focus most matches the role/company.\n\n` +
+    `RESUME VARIANTS:\n${list}\n\n` +
+    `JOB:\nTitle: ${job.title || ''}\n${job.jobText ? 'Description: ' + String(job.jobText).slice(0, 3000) : ''}\n\n` +
+    `Respond ONLY with JSON: {"index": <0-based index of the best variant>}.`
+  );
+}
+export function parseResumePick(out: string, n: number): number {
+  try {
+    const m = out.match(/\{[\s\S]*\}/);
+    if (m) { const j = JSON.parse(m[0]); const i = Number(j.index); if (Number.isInteger(i) && i >= 0 && i < n) return i; }
+  } catch { /* fall through */ }
+  return -1;
+}
+
 export function parseFieldAction(out: string): { action: 'fill' | 'ask'; value?: string; hint?: string } {
   try {
     const m = out.match(/\{[\s\S]*\}/);

@@ -16,13 +16,13 @@ import { harvestSearch, boardById, boardMode, BOARDS } from './sources';
 import { runClaudeCLI } from '../claude';
 import {
   resolveFieldPrompt, tailorAnswerPrompt, parseFieldAction, fitScorePrompt, parseFitScore,
-  relatedRolesPrompt, parseRoles,
+  relatedRolesPrompt, parseRoles, resumePickPrompt, parseResumePick,
 } from '../autopilot-prompts';
 import {
   getAnswerBank, getDocuments,
   getAutopilotJobs, getAutopilotJob, updateJob, upsertNeed, getOpenNeeds, lookupAnsweredNeed,
   getSavedSearches, enqueuePosting, isJobKnown, getAutopilotSettings, countLoggedToday,
-  getBoardModes,
+  getBoardModes, getResumeFocus,
 } from '../database';
 import type { AnswerBankEntry, AutopilotJob, AutopilotJobState, DriveStatus } from '../../shared/types';
 
@@ -105,6 +105,21 @@ async function handleBridge(msg: BridgeMsg): Promise<{ ok: boolean; data?: any }
     }
     if (p === '/documents') {
       return { ok: true, data: { documents: getDocuments() } };
+    }
+    if (p === '/resume') {
+      // pick the best resume variant for this job and return its bytes
+      const resumes = getDocuments().filter((d) => d.tags.includes('resume'));
+      if (!resumes.length) return { ok: false };
+      let chosen = resumes.find((d) => d.isDefault) || resumes[0];
+      if (resumes.length > 1) {
+        const focus = getResumeFocus();
+        const out = await runClaudeCLI(resumePickPrompt(resumes.map((d) => ({ label: d.label, focus: focus[d.id] || '' })), { title: body.title, jobText: body.jobText }), 20000).catch(() => '');
+        const idx = parseResumePick(out, resumes.length);
+        if (idx >= 0) chosen = resumes[idx];
+      }
+      if (!fs.existsSync(chosen.filePath)) return { ok: false };
+      const buf = fs.readFileSync(chosen.filePath);
+      return { ok: true, data: { fileName: path.basename(chosen.filePath), base64: buf.toString('base64'), variant: chosen.label } };
     }
     if (p.indexOf('/document') === 0) {
       const id = p.split('id=')[1];

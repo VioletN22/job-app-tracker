@@ -181,23 +181,33 @@ export const INJECTED_SOURCE = String.raw`
     var bytes = Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); });
     return new File([bytes], name || 'document.pdf', { type: 'application/pdf' });
   }
+  function setFileOnInput(f, base64, name) {
+    var file = b64ToFile(base64, name);
+    var dt = new DataTransfer(); dt.items.add(file);
+    f.el.files = dt.files;
+    f.el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
   function uploadDefaultDoc(f) {
+    var label = (f.label || '').toLowerCase();
+    var isCover = label.indexOf('cover') >= 0;
+    // Resume upload: let Node pick the best variant for THIS job, then attach it.
+    if (!isCover) {
+      return call('/resume', 'POST', { title: job.title, jobText: job.jobText }).then(function (res) {
+        if (res.ok && res.data && res.data.base64) return setFileOnInput(f, res.data.base64, res.data.fileName);
+        return false;
+      });
+    }
+    // Cover-letter file upload: pick a cover-letter-tagged doc.
     return call('/documents', 'GET').then(function (resp) {
       if (!resp.ok || !resp.data || !resp.data.documents || !resp.data.documents.length) return false;
-      var label = (f.label || '').toLowerCase();
-      var want = label.indexOf('cover') >= 0 ? 'cover-letter' : 'resume';
       var docs = resp.data.documents;
-      var doc = docs.find(function (d) { return d.isDefault && d.tags.indexOf(want) >= 0; })
-        || docs.find(function (d) { return d.tags.indexOf(want) >= 0; })
-        || docs.find(function (d) { return d.isDefault; }) || docs[0];
+      var doc = docs.find(function (d) { return d.isDefault && d.tags.indexOf('cover-letter') >= 0; })
+        || docs.find(function (d) { return d.tags.indexOf('cover-letter') >= 0; });
       if (!doc) return false;
       return call('/document?id=' + encodeURIComponent(doc.id), 'GET').then(function (res) {
         if (!res.ok || !res.data || !res.data.base64) return false;
-        var file = b64ToFile(res.data.base64, res.data.fileName);
-        var dt = new DataTransfer(); dt.items.add(file);
-        f.el.files = dt.files;
-        f.el.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
+        return setFileOnInput(f, res.data.base64, res.data.fileName);
       });
     });
   }

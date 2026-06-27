@@ -50,6 +50,8 @@ import {
   addDocument,
   deleteDocument,
   setDocumentDefault,
+  getResumeFocus,
+  setResumeFocus,
   getVoiceNotes,
   addVoiceNote,
   deleteVoiceNote,
@@ -668,6 +670,8 @@ ipcMain.handle('autopilot:addDocument', async (_e, label: string, filePath: stri
   addDocument(label, filePath, tags, isDefault));
 ipcMain.handle('autopilot:deleteDocument', async (_e, id: string) => { deleteDocument(id); return { ok: true }; });
 ipcMain.handle('autopilot:setDocumentDefault', async (_e, id: string) => { setDocumentDefault(id); return { ok: true }; });
+ipcMain.handle('autopilot:getResumeFocus', async () => getResumeFocus());
+ipcMain.handle('autopilot:setResumeFocus', async (_e, docId: string, focus: string) => { setResumeFocus(docId, focus); return { ok: true }; });
 ipcMain.handle('autopilot:getVoiceNotes', async () => getVoiceNotes());
 ipcMain.handle('autopilot:addVoiceNote', async (_e, kind: string, note: string) => addVoiceNote(kind as any, note));
 ipcMain.handle('autopilot:deleteVoiceNote', async (_e, id: string) => { deleteVoiceNote(id); return { ok: true }; });
