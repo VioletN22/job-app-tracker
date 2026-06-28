@@ -351,6 +351,32 @@ export const INJECTED_SOURCE = String.raw`
     return detectFooter(root).kind;
   }
 
+  // Resolve a LinkedIn OFFSITE job's REAL company application URL via LinkedIn's own
+  // Voyager API (same-origin, uses the logged-in session). LinkedIn's offsite "Apply"
+  // redirect 404s inside an embedded view, so we skip it and go to the company page
+  // directly. Returns a Promise<string|null>.
+  function readCookie(name) {
+    var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return m ? m[1] : '';
+  }
+  function getLinkedInApplyUrl() {
+    try {
+      var mm = (location.href || '').match(/(\d{8,})/);
+      if (!mm) return Promise.resolve(null);
+      var csrf = readCookie('JSESSIONID').replace(/"/g, '');
+      var api = 'https://www.linkedin.com/voyager/api/jobs/jobPostings/' + mm[1];
+      return fetch(api, { credentials: 'include', headers: { 'csrf-token': csrf, 'x-restli-protocol-version': '2.0.0', 'accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          if (!j) return null;
+          var s = JSON.stringify(j);
+          var m = s.match(/"companyApplyUrl":"([^"]+)"/) || s.match(/"applyUrl":"([^"]+)"/);
+          return m ? m[1] : null;
+        })
+        .catch(function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+  }
+
   // True when the page is an error / not-found page (no real form, and the visible
   // text reads like a 404). Used to recover after a bad navigation.
   function looksDead() {
@@ -365,6 +391,7 @@ export const INJECTED_SOURCE = String.raw`
     clickFooter: clickFooter,
     footer: footer,
     clickExternalApply: clickExternalApply,
+    getLinkedInApplyUrl: getLinkedInApplyUrl,
     looksDead: looksDead,
     hasForm: function () { return !!getFormRoot(); },
   };

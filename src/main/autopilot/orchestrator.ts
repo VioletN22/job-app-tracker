@@ -221,22 +221,30 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
       if (!res) { if (step === 0) throw new Error('no form / page blocked (login or captcha?)'); break; }
       if (res.opening) { await sleep(rand(1200, 2200)); continue; } // Easy Apply modal opening
       if (res.noForm) {
-        // No fillable form here. On a direct ATS / board page, an "Apply" button
-        // usually leads straight to the form, so click it (it loads IN this view via
-        // setWindowOpenHandler) and re-scan. We do NOT auto-click on LinkedIn — its
-        // external "Apply" goes through a redirect that breaks under a scripted click
-        // and lands on LinkedIn's own "Page not found"; instead we surface the real,
-        // working posting and you click Apply yourself (the company site then loads
-        // right here too). Everything stays inside aplyd either way.
+        // No fillable form on this page. Get to the REAL application once, then re-scan.
         const isLinkedIn = /linkedin\.com/i.test(job.url || '');
-        if (!triedExternal && !isLinkedIn) {
-          let clicked = false;
-          try { clicked = await evalInTab(tab, 'window.AplydDrive.clickExternalApply()'); } catch { clicked = false; }
-          if (clicked) {
-            triedExternal = true;
-            emitStatus(deps, `Opening the application for ${company} right here…`, job.id);
-            await sleep(rand(3200, 4200));
-            continue; // re-scan the page that just loaded
+        if (!triedExternal) {
+          triedExternal = true;
+          if (isLinkedIn) {
+            // LinkedIn's offsite "Apply" redirect 404s inside an embedded view (even on
+            // a real click). Skip it: ask LinkedIn's own data for the company's real
+            // application URL and load THAT directly — lands on the actual ATS page.
+            let ext: string | null = null;
+            try { ext = await evalInTab(tab, 'window.AplydDrive.getLinkedInApplyUrl()'); } catch { ext = null; }
+            if (ext && /^https?:/i.test(ext)) {
+              emitStatus(deps, `Opening ${company}'s real application page…`, job.id);
+              try { await tab.wc.loadURL(ext); await sleep(rand(2800, 3800)); await ensureInjected(tab, ctx); } catch { /* ignore */ }
+              continue; // re-scan the company page (fillable form, or hand off)
+            }
+          } else {
+            // direct ATS / board page: an "Apply" button usually leads to the form.
+            let clicked = false;
+            try { clicked = await evalInTab(tab, 'window.AplydDrive.clickExternalApply()'); } catch { clicked = false; }
+            if (clicked) {
+              emitStatus(deps, `Opening the application for ${company} right here…`, job.id);
+              await sleep(rand(3200, 4200));
+              continue; // re-scan the page that just loaded
+            }
           }
         }
         // If a navigation left us on a dead / 404 page, restore the real posting so
