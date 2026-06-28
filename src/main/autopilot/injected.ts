@@ -351,12 +351,21 @@ export const INJECTED_SOURCE = String.raw`
     return detectFooter(root).kind;
   }
 
+  // True when the page is an error / not-found page (no real form, and the visible
+  // text reads like a 404). Used to recover after a bad navigation.
+  function looksDead() {
+    if (getFormRoot()) return false;
+    var t = ((document.title || '') + ' ' + ((document.body && document.body.innerText) || '')).toLowerCase().slice(0, 4000);
+    return /page not found|page doesn'?t exist|can'?t seem to find the page|page you'?re looking for|page isn'?t available|404 error|not found error|this page (?:is )?(?:no longer|isn'?t) available|sorry, (?:this|the) (?:page|job)/.test(t);
+  }
+
   window.AplydDrive = {
     setJob: function (ctx) { job = { company: (ctx && ctx.company) || '', title: (ctx && ctx.title) || '', jobText: (ctx && ctx.jobText) || '' }; },
     fillStep: fillStep,
     clickFooter: clickFooter,
     footer: footer,
     clickExternalApply: clickExternalApply,
+    looksDead: looksDead,
     hasForm: function () { return !!getFormRoot(); },
   };
 })();

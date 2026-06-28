@@ -221,10 +221,15 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
       if (!res) { if (step === 0) throw new Error('no form / page blocked (login or captcha?)'); break; }
       if (res.opening) { await sleep(rand(1200, 2200)); continue; } // Easy Apply modal opening
       if (res.noForm) {
-        // No fillable form here. First try to click an "Apply" button that opens the
-        // real application — it loads IN this workspace view (setWindowOpenHandler),
-        // so the whole thing stays inside aplyd. Then re-scan for a form.
-        if (!triedExternal) {
+        // No fillable form here. On a direct ATS / board page, an "Apply" button
+        // usually leads straight to the form, so click it (it loads IN this view via
+        // setWindowOpenHandler) and re-scan. We do NOT auto-click on LinkedIn — its
+        // external "Apply" goes through a redirect that breaks under a scripted click
+        // and lands on LinkedIn's own "Page not found"; instead we surface the real,
+        // working posting and you click Apply yourself (the company site then loads
+        // right here too). Everything stays inside aplyd either way.
+        const isLinkedIn = /linkedin\.com/i.test(job.url || '');
+        if (!triedExternal && !isLinkedIn) {
           let clicked = false;
           try { clicked = await evalInTab(tab, 'window.AplydDrive.clickExternalApply()'); } catch { clicked = false; }
           if (clicked) {
@@ -234,9 +239,16 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
             continue; // re-scan the page that just loaded
           }
         }
-        // Still no form we can fill (true off-site flow, or a custom ATS). Open it in
-        // the workspace and hand it to you: go through it step-by-step, then hit
-        // "Mark applied" (or Skip). Everything happens inside aplyd.
+        // If a navigation left us on a dead / 404 page, restore the real posting so
+        // you're never stranded on a broken page — then hand it over for manual apply.
+        let dead = false;
+        try { dead = await evalInTab(tab, 'window.AplydDrive.looksDead()'); } catch { dead = false; }
+        if (dead && job.url) {
+          emitStatus(deps, `That link 404'd — reloading the real posting for ${company}…`, job.id);
+          try { await tab.wc.loadURL(job.url); await sleep(2500); await ensureInjected(tab, ctx); } catch { /* ignore */ }
+        }
+        // Open it in the workspace and hand it to you: go through it step-by-step,
+        // then hit "Mark applied" (or Skip). Everything happens inside aplyd.
         try { const shot = await screenshot(tab, job.id); updateJob(job.id, { screenshotPath: shot }); } catch { /* ignore */ }
         focusHost();
         updateJob(job.id, { state: 'surfaced', mode: 'find', needsCount: 0, error: null });
