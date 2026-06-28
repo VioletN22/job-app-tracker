@@ -728,15 +728,17 @@ ipcMain.handle('autopilot:refineCoverLetter', async (_e, opts: { company: string
 // LIVE company research (their site/values/this year's direction) + the job posting,
 // matched to your resume. Generate → refine with feedback → copy. Persisted per app.
 ipcMain.handle('coverletter:getForApp', async (_e, applicationId: string) => getCoverLetterForApplication(applicationId));
-ipcMain.handle('coverletter:generate', async (_e, opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string }) => {
+ipcMain.handle('coverletter:generate', async (_e, opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string; location?: string }) => {
   const portfolioText = await portfolioSnapshot().catch(() => '');
-  // Live research: prefer the in-app browser (real fingerprint); fall back to a
-  // plain web fetch if the browser path yields nothing.
-  let researchText = await researchCompany(opts.company, opts.jobUrl).catch(() => '');
-  if (!researchText) researchText = await companyResearch(opts.company, opts.jobUrl).catch(() => '');
+  // Live research: prefer the in-app browser (real fingerprint, location-grounded);
+  // fall back to a plain web fetch if the browser path yields nothing.
+  const r = await researchCompany(opts.company, opts.jobUrl, opts.location).catch(() => ({ text: '', sources: [] as string[] }));
+  let researchText = r.text;
+  let sources = r.sources;
+  if (!researchText) { researchText = await companyResearch(opts.company, opts.jobUrl).catch(() => ''); sources = (researchText.match(/SOURCE (\S+):/g) || []).map((m) => m.replace(/^SOURCE |:$/g, '')); }
   const body = (await runClaudeCLI(coverLetterPrompt({ ...opts, portfolioText, researchText }), 120000)).trim();
   try { saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body }); } catch { /* persist best-effort */ }
-  return { body, researched: !!researchText };
+  return { body, researched: !!researchText, sources };
 });
 ipcMain.handle('coverletter:refine', async (_e, opts: { applicationId: string; company: string; role: string; body: string; feedback: string; remember?: boolean; jobUrl?: string }) => {
   if (opts.remember && opts.feedback.trim()) addVoiceNote('style', opts.feedback.trim());

@@ -209,7 +209,7 @@ export function coverLetterPrompt(opts: { company: string; role: string; jobText
     `Ground every claim in the user's real experience (resume, portfolio, known facts) — do NOT invent anything.\n\n` +
     `ROLE: ${opts.role}\nCOMPANY: ${opts.company}\n\n` +
     (opts.jobText ? `JOB POSTING:\n${opts.jobText.slice(0, 4000)}\n\n` : '') +
-    (opts.researchText ? `COMPANY RESEARCH (pulled from the web — use it to show genuine, specific knowledge of the company: what they do, recent work, this year's direction/goals, and their values. Weave in 1-2 concrete, accurate details; never fabricate or overstate):\n${opts.researchText}\n\n` : '') +
+    (opts.researchText ? `COMPANY RESEARCH (pulled from the web — may be imperfect). FIRST verify it actually describes the SAME company as in the JOB POSTING above: same line of business, consistent with the role/location. If it looks like a different company (e.g. a same-named business in another country/industry), IGNORE this research entirely and write only from the posting + the user's experience — do NOT use any detail you cannot trust. If it does match, weave in 1-2 concrete, accurate, verifiable details (what they do, this year's direction, their values). Never fabricate or overstate.\n${opts.researchText}\n\n` : '') +
     profileBlock(opts) +
     `Approach: read what the role actually wants (from the job posting), then MATCH the user's real resume experience to those needs — lead with the overlaps that matter most, and connect them to where the company is heading. ` +
     `Keep it to 3-4 tight paragraphs, specific and genuine, no corporate fluff or clichés. ` +

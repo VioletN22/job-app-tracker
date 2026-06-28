@@ -452,6 +452,7 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
   const [feedback, setFeedback] = useState('');
   const [copied, setCopied] = useState(false);
   const [note, setNote] = useState('');
+  const [sources, setSources] = useState<string[]>([]);
 
   useEffect(() => {
     cl().getForApp(application.id).then((d: any) => { if (d && d.body) { setBody(d.body); setOpen(true); } }).catch(() => {});
@@ -460,11 +461,14 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
   const save = (text: string) => { cl().saveForApp({ applicationId: application.id, company, role, jobUrl: application.job_url, body: text }).catch(() => {}); };
 
   const generate = async () => {
-    setBusy('generating'); setOpen(true); setNote('Researching ' + company + ' and drafting from your resume…');
+    setBusy('generating'); setOpen(true); setSources([]); setNote('Researching ' + company + ' (cross-checking against this listing) and drafting from your resume…');
     try {
-      const res = await cl().generate({ applicationId: application.id, company, role, jobText, jobUrl: application.job_url });
+      const res = await cl().generate({ applicationId: application.id, company, role, jobText, jobUrl: application.job_url, location: application.location });
       setBody(res.body || '');
-      setNote(res.researched ? 'Drafted with live research on ' + company + '. Refine or copy below.' : 'Drafted from your profile + the posting (couldn’t fetch company research this time).');
+      setSources(res.sources || []);
+      setNote(res.researched
+        ? 'Drafted using the sources below (it ignores anything that doesn’t match this listing). Check they’re the right company, then refine or copy.'
+        : 'Drafted from your profile + the posting (couldn’t fetch company research this time — so no company-specific claims were invented).');
     } catch { setNote('Could not generate. Try again.'); }
     finally { setBusy(''); }
   };
@@ -504,6 +508,18 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {note && <div style={{ fontSize: 11.5, color: working ? 'var(--accent,#f23a17)' : 'var(--muted)' }}>{note}</div>}
+
+          {/* the exact pages the research read — so you can verify the right company */}
+          {sources.length > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontWeight: 600 }}>Researched from:</span>
+              {sources.map((s, i) => {
+                let host = s; try { host = new URL(s).host.replace(/^www\./, ''); } catch { /* keep */ }
+                return <span key={i} title={s} style={{ padding: '2px 8px', borderRadius: 20, border: '1px solid var(--line)', background: 'var(--bg,#fff)' }}>{host}</span>;
+              })}
+              <span style={{ opacity: 0.8 }}>· not the right company? hit Regenerate</span>
+            </div>
+          )}
 
           <textarea
             value={body}

@@ -62,7 +62,7 @@ const electronAPI = {
   // generate / refine-with-feedback / copy, persisted on the application.
   coverLetter: {
     getForApp: (applicationId: string): Promise<CoverLetter | null> => ipcRenderer.invoke('coverletter:getForApp', applicationId),
-    generate: (opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string }): Promise<{ body: string; researched: boolean }> =>
+    generate: (opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string; location?: string }): Promise<{ body: string; researched: boolean; sources: string[] }> =>
       ipcRenderer.invoke('coverletter:generate', opts),
     refine: (opts: { applicationId: string; company: string; role: string; body: string; feedback: string; remember?: boolean; jobUrl?: string }): Promise<{ body: string }> =>
       ipcRenderer.invoke('coverletter:refine', opts),
