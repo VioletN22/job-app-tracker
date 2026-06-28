@@ -225,6 +225,7 @@ export interface CoverLetter {
   role: string;
   jobUrl: string | null;
   applicationId: string | null;   // set when this draft belongs to a tracked application
+  label: string | null;           // friendly name for a saved version
   body: string;
   isFinal: boolean;        // marked perfected/locked in the vault
   createdAt: string;

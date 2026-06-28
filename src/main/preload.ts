@@ -73,6 +73,14 @@ const electronAPI = {
       ipcRenderer.invoke('coverletter:refine', opts),
     saveForApp: (opts: { applicationId: string; company: string; role: string; jobUrl?: string; body: string }): Promise<CoverLetter> =>
       ipcRenderer.invoke('coverletter:saveForApp', opts),
+    // Save a version you like → BOTH aplyd's vault and a labelled PDF on disk.
+    saveVersion: (opts: { applicationId: string; company: string; role: string; jobUrl?: string; body: string; label?: string }): Promise<{ version: CoverLetter; pdfPath: string }> =>
+      ipcRenderer.invoke('coverletter:saveVersion', opts),
+    getVersions: (applicationId: string): Promise<CoverLetter[]> => ipcRenderer.invoke('coverletter:getVersions', applicationId),
+    deleteVersion: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('coverletter:deleteVersion', id),
+    getDir: (): Promise<string> => ipcRenderer.invoke('coverletter:getDir'),
+    setDir: (): Promise<{ dir: string }> => ipcRenderer.invoke('coverletter:setDir'),
+    openFolder: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('coverletter:openFolder'),
   },
   autopilot: {
     getAnswerBank: (): Promise<AnswerBankEntry[]> => ipcRenderer.invoke('autopilot:getAnswerBank'),

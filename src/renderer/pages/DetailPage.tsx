@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, MapPin, DollarSign, Calendar, ChevronDown, ChevronRight, FileText, Sparkles, Copy, Check, RotateCcw, Send } from 'lucide-react';
+import { ArrowLeft, MapPin, DollarSign, Calendar, ChevronDown, ChevronRight, FileText, Sparkles, Copy, Check, RotateCcw, Send, Save, FolderOpen, Trash2, Download } from 'lucide-react';
 import { JobApplication, Workflow, StageHistory, JOB_SOURCES } from '../../shared/types';
 import { ChatPanel } from '../components/ChatPanel';
 import { Dropdown } from '../components/Dropdown';
@@ -448,7 +448,7 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
 
   const [body, setBody] = useState('');
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState<'' | 'generating' | 'refining'>('');
+  const [busy, setBusy] = useState<'' | 'generating' | 'refining' | 'saving'>('');
   const [feedback, setFeedback] = useState('');
   const [copied, setCopied] = useState(false);
   const [note, setNote] = useState('');
@@ -501,6 +501,27 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
   };
 
   const copy = async () => { try { await navigator.clipboard.writeText(body); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* ignore */ } };
+
+  // saved versions + PDF folder
+  const [versions, setVersions] = useState<any[]>([]);
+  const [dir, setDir] = useState('');
+  const [saveMsg, setSaveMsg] = useState('');
+  const loadVersions = () => cl().getVersions(application.id).then(setVersions).catch(() => {});
+  useEffect(() => { loadVersions(); cl().getDir().then(setDir).catch(() => {}); }, [application.id]);
+
+  const saveVersion = async () => {
+    if (!body.trim()) return;
+    setBusy('saving'); setSaveMsg('');
+    try {
+      const res = await cl().saveVersion({ applicationId: application.id, company, role, jobUrl: application.job_url, body });
+      await loadVersions();
+      setSaveMsg(res.pdfPath ? ('Saved to aplyd + PDF: ' + res.pdfPath) : 'Saved to aplyd (PDF failed — check the folder).');
+    } catch { setSaveMsg('Could not save. Try again.'); }
+    finally { setBusy(''); }
+  };
+  const loadVersion = (v: any) => { setBody(v.body); save(v.body); setNote('Loaded a saved version. Edit, refine, or copy.'); };
+  const deleteVersion = async (id: string) => { await cl().deleteVersion(id).catch(() => {}); loadVersions(); };
+  const changeDir = async () => { const r = await cl().setDir().catch(() => null); if (r?.dir) setDir(r.dir); };
 
   const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, padding: '7px 12px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg,#fff)', color: 'var(--ink)', cursor: 'pointer' };
   const accentBtn: React.CSSProperties = { ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' };
@@ -568,15 +589,45 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
           </div>
 
           {/* actions */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button onClick={copy} disabled={!body} style={accentBtn}>
               {copied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy letter</>}
+            </button>
+            <button onClick={saveVersion} disabled={working || !body} title="Keep this version — saves to aplyd AND as a labelled PDF in your folder" style={btn}>
+              <Save size={13} /> {busy === 'saving' ? 'Saving…' : 'Save version + PDF'}
             </button>
             <button onClick={generate} disabled={working} style={btn}>
               <RotateCcw size={13} /> {busy === 'generating' ? 'Regenerating…' : 'Regenerate'}
             </button>
-            <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--muted)' }}>Saved to this application · feedback teaches your voice</span>
           </div>
+
+          {saveMsg && <div style={{ fontSize: 11, color: 'var(--ink)', wordBreak: 'break-all' }}>{saveMsg}</div>}
+
+          {/* PDF folder */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted)', flexWrap: 'wrap' }}>
+            <span>PDF folder:</span>
+            <span title={dir} style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink)' }}>{dir || '…'}</span>
+            <button onClick={changeDir} style={{ ...btn, padding: '3px 8px', fontSize: 10.5 }}>Change</button>
+            <button onClick={() => cl().openFolder()} style={{ ...btn, padding: '3px 8px', fontSize: 10.5 }}><FolderOpen size={11} /> Open</button>
+          </div>
+
+          {/* saved versions */}
+          {versions.length > 0 && (
+            <div style={{ borderTop: '1px solid var(--line)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <p style={{ ...sectionLabel, margin: 0 }}>Saved versions ({versions.length})</p>
+              {versions.map((v) => (
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg,#fff)' }}>
+                  <FileText size={12} style={{ color: 'var(--accent,#f23a17)', flex: 'none' }} />
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.label || (company + ' - ' + role)}</span>
+                  <span style={{ fontSize: 10, color: 'var(--muted)' }}>{new Date(v.updatedAt).toLocaleDateString()}</span>
+                  <button onClick={() => loadVersion(v)} title="Load this version into the editor" style={{ ...btn, padding: '3px 8px', fontSize: 10.5 }}><Download size={11} /> Load</button>
+                  <button onClick={() => deleteVersion(v.id)} title="Delete this saved version" style={{ ...btn, padding: '3px 8px', fontSize: 10.5, color: 'var(--muted)' }}><Trash2 size={11} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>Draft auto-saves to this application · “Save version + PDF” keeps a copy in aplyd and writes a labelled PDF · feedback teaches your voice</span>
         </div>
       )}
     </div>

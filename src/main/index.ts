@@ -63,6 +63,8 @@ import {
   deleteCoverLetter,
   getCoverLetterForApplication,
   saveCoverLetterForApplication,
+  saveCoverLetterVersion,
+  getSavedCoverLettersForApplication,
   enqueueJob,
   getAutopilotJobs,
   deleteAutopilotJob,
@@ -292,27 +294,9 @@ app.whenReady().then(() => {
     initializeDatabase(); // idempotent — ensure the DB is ready for extension calls
     startAutopilotServer({
       onApply: logApplication,
-      // Save a finished cover letter to disk as a PDF (default ~/Documents/work-stuff)
-      // and into the in-app vault.
+      // Save a finished cover letter to disk as a PDF + into the in-app vault.
       saveCover: async ({ company, role, body }) => {
-        const dir = path.join(app.getPath('documents'), 'work-stuff');
-        fs.mkdirSync(dir, { recursive: true });
-        const safe = (s: string) => (s || '').replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Untitled';
-        const file = path.join(dir, `Cover Letter - ${safe(company)} - ${safe(role)}.pdf`);
-        const paras = body.split(/\n{2,}/).map((p) => `<p>${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br/>')}</p>`).join('\n');
-        const html =
-          `<!DOCTYPE html><html><head><meta charset="utf-8"><style>` +
-          `body{font-family:Georgia,'Times New Roman',serif;font-size:12pt;line-height:1.55;color:#111;margin:0;padding:0}` +
-          `.doc{max-width:660px;margin:0 auto}p{margin:0 0 14px}` +
-          `</style></head><body><div class="doc">${paras}</div></body></html>`;
-        const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
-        try {
-          await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-          const pdf = await win.webContents.printToPDF({ printBackground: true, marginsType: 0 } as any);
-          fs.writeFileSync(file, pdf);
-        } finally {
-          win.destroy();
-        }
+        const file = await writeCoverPdf(company, role, body);
         try { saveCoverLetter({ company, role, body, isFinal: true, jobUrl: null }); } catch { /* vault best-effort */ }
         return { path: file };
       },
@@ -727,7 +711,52 @@ ipcMain.handle('autopilot:refineCoverLetter', async (_e, opts: { company: string
 // Full context: everything aplyd knows about you (resume/portfolio/facts/voice) +
 // LIVE company research (their site/values/this year's direction) + the job posting,
 // matched to your resume. Generate → refine with feedback → copy. Persisted per app.
+// Where cover-letter PDFs land (settable; default ~/Documents/work-stuff).
+function coverLetterDir(): string {
+  const custom = (getSetting('cover_letter_dir') || '').trim();
+  return custom || path.join(app.getPath('documents'), 'work-stuff');
+}
+const safeCoverName = (s: string) => (s || '').replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Untitled';
+// Render a cover letter to a labelled PDF, never overwriting an earlier version.
+async function writeCoverPdf(company: string, role: string, body: string): Promise<string> {
+  const dir = coverLetterDir();
+  fs.mkdirSync(dir, { recursive: true });
+  let file = path.join(dir, `Cover Letter - ${safeCoverName(company)} - ${safeCoverName(role)}.pdf`);
+  if (fs.existsSync(file)) { const base = file.replace(/\.pdf$/, ''); let n = 2; while (fs.existsSync(`${base} (${n}).pdf`)) n++; file = `${base} (${n}).pdf`; }
+  const paras = body.split(/\n{2,}/).map((p) => `<p>${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br/>')}</p>`).join('\n');
+  const html =
+    `<!DOCTYPE html><html><head><meta charset="utf-8"><style>` +
+    `body{font-family:Georgia,'Times New Roman',serif;font-size:12pt;line-height:1.55;color:#111;margin:0;padding:0}` +
+    `.doc{max-width:660px;margin:0 auto}p{margin:0 0 14px}` +
+    `</style></head><body><div class="doc">${paras}</div></body></html>`;
+  const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+  try {
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    const pdf = await win.webContents.printToPDF({ printBackground: true, marginsType: 0 } as any);
+    fs.writeFileSync(file, pdf);
+  } finally { win.destroy(); }
+  return file;
+}
+
 ipcMain.handle('coverletter:getForApp', async (_e, applicationId: string) => getCoverLetterForApplication(applicationId));
+ipcMain.handle('coverletter:getVersions', async (_e, applicationId: string) => getSavedCoverLettersForApplication(applicationId));
+ipcMain.handle('coverletter:deleteVersion', async (_e, id: string) => { deleteCoverLetter(id); return { ok: true }; });
+ipcMain.handle('coverletter:getDir', async () => coverLetterDir());
+ipcMain.handle('coverletter:setDir', async () => {
+  const r = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory', 'createDirectory'], defaultPath: coverLetterDir() });
+  if (r.canceled || !r.filePaths[0]) return { dir: coverLetterDir() };
+  setSetting('cover_letter_dir', r.filePaths[0]);
+  return { dir: r.filePaths[0] };
+});
+ipcMain.handle('coverletter:openFolder', async () => { try { fs.mkdirSync(coverLetterDir(), { recursive: true }); shell.openPath(coverLetterDir()); } catch { /* ignore */ } return { ok: true }; });
+// Save a version you LIKE in BOTH places: aplyd's vault (kept version) + a PDF on disk.
+ipcMain.handle('coverletter:saveVersion', async (_e, opts: { applicationId: string; company: string; role: string; jobUrl?: string; body: string; label?: string }) => {
+  const label = (opts.label && opts.label.trim()) ? opts.label.trim() : `${opts.company} - ${opts.role}`;
+  const version = saveCoverLetterVersion(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body: opts.body, label });
+  let pdfPath = '';
+  try { pdfPath = await writeCoverPdf(opts.company, opts.role, opts.body); } catch (e) { log('[cover] pdf save err', String(e)); }
+  return { version, pdfPath };
+});
 ipcMain.handle('coverletter:generate', async (_e, opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string; location?: string }) => {
   const emit = (stage: string, message: string) => { try { mainWindow?.webContents.send('coverletter:progress', { applicationId: opts.applicationId, stage, message }); } catch { /* ignore */ } };
   const t0 = Date.now();
