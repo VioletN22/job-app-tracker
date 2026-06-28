@@ -304,9 +304,14 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
   // The job the agent just opened off-site and is now WAITING on you to finish in
   // the workspace (it pauses the run until you hit Mark applied or Skip).
   const activeApply = currentJobId ? (jobs.find((j) => j.id === currentJobId && j.state === 'surfaced') || null) : null;
+  // The job the agent just FILLED and is now holding for your review + submit
+  // (guided "one at a time, wait for me" mode — the run waits here).
+  const activeReview = currentJobId ? (jobs.find((j) => j.id === currentJobId && j.state === 'ready') || null) : null;
   const openApply = (id: string) => drive().openForApply(id);
   const markApplied = async (id: string) => { setBusy(true); await drive().markApplied(id); await reload(); setBusy(false); };
-  const approve = async (id: string) => { setBusy(true); await drive().approve(id); await reload(); setBusy(false); };
+  // Guided mode: submit the application that's open in the window (held tab); the
+  // backend falls back to a fresh reopen+submit for jobs not currently on screen.
+  const approve = async (id: string) => { setBusy(true); await drive().submitHeld(id); await reload(); setBusy(false); };
   const approveAll = async () => { setBusy(true); await drive().approveAll(); await reload(); setBusy(false); };
   const answer = async (v: string) => { if (!firstNeed || !v.trim()) return; setBusy(true); await drive().answerNeed(firstNeed.id, v.trim()); setAns(''); await reload(); setBusy(false); };
 
@@ -398,6 +403,19 @@ const WorkspacePane: React.FC<{ jobs: AutopilotJob[]; needs: AutopilotNeed[]; se
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{activeApply.company || 'Unknown'} — {activeApply.title || 'Role'}</div>
           <div style={{ fontSize: 11, color: 'var(--muted,#888)', marginBottom: 10 }}>This one applies on the company's own site. It's open in the window below — go through it step by step, hit their submit, then tell me you're done. The run waits for you.</div>
           <button style={{ ...btn, background: '#1f78c8', color: '#fff', borderColor: '#1f78c8', fontWeight: 700 }} disabled={busy} onClick={() => markApplied(activeApply.id)}><Check size={13} /> Mark applied &amp; continue</button>
+        </div>
+      )}
+
+      {/* filled by aplyd, waiting for your review + submit (guided focus) */}
+      {activeReview && (
+        <div style={{ margin: '10px 14px 0', padding: '12px 14px', border: '1.5px solid #1f9d55', borderRadius: 10, background: 'rgba(31,157,85,.06)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: '#1f9d55', marginBottom: 6 }}>
+            <Check size={13} /> Filled — review &amp; submit
+            <button onClick={skipApp} title="Skip this one and move on" style={{ marginLeft: 'auto', ...btn, fontSize: 11, padding: '3px 9px', color: 'var(--muted,#888)' }}><SkipForward size={12} /> Skip this app</button>
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{activeReview.company || 'Unknown'} — {activeReview.title || 'Role'}</div>
+          <div style={{ fontSize: 11, color: 'var(--muted,#888)', marginBottom: 10 }}>I filled this from your profile. Check it in the window below, then submit — I'll wait here and won't move on until you do.</div>
+          <button style={{ ...btn, background: '#1f9d55', color: '#fff', borderColor: '#1f9d55', fontWeight: 700 }} disabled={busy} onClick={() => approve(activeReview.id)}><Send size={13} /> Approve &amp; submit &amp; continue</button>
         </div>
       )}
 

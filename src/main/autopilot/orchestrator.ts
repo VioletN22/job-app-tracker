@@ -42,12 +42,21 @@ let cancelled = false;
 let paused = false;          // manual pause (toggle); halts at safe points
 let skipRequested = false;   // user asked to skip the app currently being filled
 
+// ── Guided ("one at a time, wait for me") mode ───────────────────────────────
+// The run focuses on ONE application, keeps it in the window, and waits for you to
+// submit / mark applied / skip before moving on. While it waits, background search
+// is held so nothing churns or swaps the view away.
+let harvestHold = false;             // true while focused on a hand-off job → search pauses
+let heldTab: Tab | null = null;      // the live tab handed to you (kept open during review)
+let heldJobId: string | null = null; // the job that tab belongs to
+
 export function isDriveRunning(): boolean { return running; }
 export function isPaused(): boolean { return paused; }
 export function pauseDrive(): void { paused = true; }
 export function resumeDrive(): void { paused = false; }
 export function skipCurrent(): void { skipRequested = true; }
 async function waitIfPaused(): Promise<void> { while (paused && !cancelled) await sleep(400); }
+async function waitWhileHold(): Promise<void> { while (harvestHold && !cancelled) await sleep(800); }
 
 function counts(): Record<AutopilotJobState, number> {
   const base: Record<string, number> = {
@@ -88,6 +97,19 @@ async function waitForApply(jobId: string): Promise<'applied' | 'skip' | 'cancel
     const j = getAutopilotJob(jobId);
     if (j && (j.state === 'logged' || j.state === 'submitted')) return 'applied';
     await sleep(2000);
+  }
+  return 'skip';
+}
+
+// Guided mode: after aplyd FILLS an application, wait for you to act on it — submit
+// it (→ submitted/logged), or skip — keeping it in the window meanwhile. ~30 min.
+async function waitForDecision(jobId: string): Promise<'done' | 'skip' | 'cancel'> {
+  for (let i = 0; i < 900; i++) {
+    if (cancelled) return 'cancel';
+    if (skipRequested) { skipRequested = false; return 'skip'; }
+    const j = getAutopilotJob(jobId);
+    if (j && ['submitting', 'submitted', 'logged', 'approved'].includes(j.state)) return 'done';
+    await sleep(1500);
   }
   return 'skip';
 }
@@ -174,7 +196,7 @@ async function ensureInjected(tab: Tab, ctx: any): Promise<boolean> {
 }
 
 // Drive a single job to the review step (or failure). Does NOT submit.
-async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<void> {
+async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0, guided = false): Promise<void> {
   updateJob(job.id, { state: 'filling', error: null });
   emitStatus(deps, 'Opening ' + (job.company || job.url.slice(0, 48)), job.id);
 
@@ -269,15 +291,17 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
           try { await tab.wc.loadURL(job.url); await sleep(2500); await ensureInjected(tab, ctx); } catch { /* ignore */ }
         }
         // Open it in the workspace and hand it to you: go through it step-by-step,
-        // then hit "Mark applied" (or Skip). Everything happens inside aplyd.
+        // then hit "Mark applied" (or Skip). Everything happens inside aplyd. The run
+        // FOCUSES here — search is held + the view stays put until you act.
         try { const shot = await screenshot(tab, job.id); updateJob(job.id, { screenshotPath: shot }); } catch { /* ignore */ }
         focusHost();
         updateJob(job.id, { state: 'surfaced', mode: 'find', needsCount: 0, error: null });
-        emitStatus(deps, `${company}: apply in the window below, then hit “Mark applied” (or Skip)`, job.id);
+        heldTab = tab; heldJobId = job.id; harvestHold = true;
+        emitStatus(deps, `${company}: apply in the window below, then hit “Mark applied” (or Skip). I'll wait.`, job.id);
         const outcome = await waitForApply(job.id);
-        if (outcome === 'applied') return;                               // you logged it
-        if (outcome === 'skip') { updateJob(job.id, { state: 'deferred' }); emitStatus(deps, `Saved ${company} for later`, job.id); return; }
-        return;                                                          // cancel → leave surfaced
+        heldTab = null; heldJobId = null; harvestHold = false;
+        if (outcome === 'skip') { updateJob(job.id, { state: 'deferred' }); emitStatus(deps, `Saved ${company} for later`, job.id); }
+        return;                                                          // applied/cancel → just move on
       }
       totalFilled += res.filled || 0;
       updateJob(job.id, { filledCount: totalFilled });
@@ -323,6 +347,18 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
     // fully filled → ready for your review + submit
     try { const shot = await screenshot(tab, job.id); updateJob(job.id, { screenshotPath: shot }); } catch { /* non-fatal */ }
     updateJob(job.id, { needsCount: 0, state: reachedReview ? 'ready' : 'failed', error: reachedReview ? null : 'could not fill any fields' });
+
+    // Guided mode: don't barrel on to the next job. FOCUS here — keep this filled
+    // application in the window, hold the background search, and wait for you to
+    // Approve & submit (or Skip). Only then move on.
+    if (guided && reachedReview) {
+      heldTab = tab; heldJobId = job.id; harvestHold = true;
+      focusHost();
+      emitStatus(deps, `Filled ${company} — review it, then Approve & submit (or Skip). I'll wait.`, job.id);
+      const dec = await waitForDecision(job.id);
+      heldTab = null; heldJobId = null; harvestHold = false;
+      if (dec === 'skip') { updateJob(job.id, { state: 'deferred' }); emitStatus(deps, `Saved ${company} for later`, job.id); }
+    }
   } catch (e: any) {
     // Vision fallback (Phase 4, pragmatic): we can't reliably auto-solve a login
     // wall / captcha / unknown ATS, so capture the screen so the failure is
@@ -361,8 +397,8 @@ export async function runDrive(deps: DriveDeps): Promise<void> {
         if (i >= todo.length) break;
         const fresh = getAutopilotJob(todo[i].id);
         if (!fresh) continue;
-        await fillJob(fresh, deps, slot);
-        await sleep(rand(3000, 7000)); // human-like gap between jobs
+        await fillJob(fresh, deps, slot, true /* guided: focus + wait on each */);
+        await sleep(rand(2000, 4000)); // human-like gap between jobs
       }
     };
     await Promise.all(Array.from({ length: slotCount }, (_v, slot) => worker(slot)));
@@ -407,7 +443,8 @@ async function expandTerms(query: string): Promise<string[]> {
 async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: number }> {
   const settings = getAutopilotSettings();
   const disabled = new Set(settings.disabledBoards || []);
-  const enabledBoards = BOARDS.filter((b) => !disabled.has(b.id));
+  // AU-only: skip US-region boards unless the user explicitly turned one on.
+  const enabledBoards = BOARDS.filter((b) => !disabled.has(b.id) && b.region !== 'US');
   const searches = getSavedSearches().filter((s) => s.enabled);
   const hasRepos = getGithubRepos().length > 0;
   if (!searches.length && !hasRepos) { emitStatus(deps, 'No searches set — tell autopilot what kind of job to look for.'); return { enqueued: 0 }; }
@@ -428,6 +465,7 @@ async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: nu
   for (const { board, s, term } of runs.slice(0, MAX_RUNS)) {
     if (cancelled || !board) break;
     await waitIfPaused();
+    await waitWhileHold();   // focused on an application → hold the search
     if (cancelled) break;
     if (remainingTarget() <= 0) { emitStatus(deps, 'Daily target reached — pausing search.'); break; }
     idx++;
@@ -439,6 +477,8 @@ async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: nu
     // score + enqueue as we go so the drive loop can pick auto jobs up immediately
     for (const p of fresh) {
       if (cancelled || scored >= SCORE_BUDGET || remainingTarget() <= 0) break;
+      await waitWhileHold();   // focused on an application → don't score ahead
+      if (cancelled) break;
       const out = await runClaudeCLI(fitScorePrompt(p), 25000).catch(() => '');
       const { score, reason } = parseFitScore(out); scored++;
       if (score >= settings.minFit) {
@@ -455,6 +495,7 @@ async function runHarvest(deps: DriveDeps, slot: number): Promise<{ enqueued: nu
   for (const r of repos) {
     if (cancelled || scored >= SCORE_BUDGET || remainingTarget() <= 0) break;
     await waitIfPaused();
+    await waitWhileHold();   // focused on an application → hold the search
     if (cancelled) break;
     emitStatus(deps, `Reading ${r.owner}/${r.repo} job list…`);
     let rjobs: any[] = [];
@@ -494,7 +535,7 @@ async function driveContinuous(deps: DriveDeps, slot: number, isHarvesting: () =
     const next = getAutopilotJobs().find((j) => j.state === 'queued');
     if (next) {
       const fresh = getAutopilotJob(next.id);
-      if (fresh) { await fillJob(fresh, deps, slot); await sleep(rand(2000, 5000)); }
+      if (fresh) { await fillJob(fresh, deps, slot, true /* guided: focus + wait on each */); await sleep(rand(1500, 3000)); }
       continue;
     }
     if (!isHarvesting()) break;   // nothing queued + search finished → done
@@ -611,4 +652,32 @@ export function markApplied(jobId: string, deps: DriveDeps): { ok: boolean } {
   try { deps.onApply(job.company || 'Unknown', job.title || 'Role', job.url); } catch { /* best effort */ }
   emitStatus(deps, `Logged ${job.company || 'application'}`, jobId);
   return { ok: true };
+}
+
+// Guided "Approve & submit": submit the application that's CURRENTLY OPEN in the
+// window (the held tab) and log it — no reopen, no view swap. Falls back to the
+// reopen-based approveJob if this job isn't the one on screen.
+export async function submitHeld(jobId: string, deps: DriveDeps): Promise<{ ok: boolean; error?: string }> {
+  const job = getAutopilotJob(jobId);
+  if (!job) return { ok: false, error: 'job not found' };
+  if (!heldTab || heldJobId !== jobId) return approveJob(jobId, deps); // not on screen → reopen path
+  const tab = heldTab;
+  emitStatus(deps, `Submitting ${job.company || ''}…`, jobId);
+  try {
+    const ctx = { company: job.company, title: job.title, jobText: '' };
+    for (let step = 0; step < MAX_STEPS; step++) {
+      await ensureInjected(tab, ctx);
+      let res: any; try { res = await evalInTab(tab, 'window.AplydDrive.fillStep()'); } catch { res = null; }
+      if (res && res.footer === 'submit') { await evalInTab(tab, 'window.AplydDrive.clickFooter("submit")').catch(() => {}); break; }
+      if (res && (res.footer === 'next' || res.footer === 'review')) { await evalInTab(tab, 'window.AplydDrive.clickFooter()').catch(() => {}); await sleep(rand(1000, 1800)); continue; }
+      break;
+    }
+    await sleep(1500);
+    updateJob(jobId, { state: 'logged' });   // ends the guided wait → run moves on
+    try { deps.onApply(job.company || 'Unknown', job.title || 'Role', job.url); } catch { /* best effort */ }
+    emitStatus(deps, `Submitted ${job.company || ''}`, jobId);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }

@@ -110,6 +110,8 @@ const electronAPI = {
     dismissNeed: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:dismissNeed', id),
     approve: (jobId: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('autopilot:drive:approve', jobId),
+    submitHeld: (jobId: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('autopilot:drive:submitHeld', jobId),
     approveAll: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:approveAll'),
     deleteJob: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:deleteJob', id),
     clearFinished: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('autopilot:drive:clearFinished'),

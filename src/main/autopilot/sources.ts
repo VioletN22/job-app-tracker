@@ -34,7 +34,7 @@ export interface Board {
   // 'auto' = agent fills + you approve; 'find' = agent surfaces, you open & apply.
   // Defaults to 'auto' when omitted.
   mode?: 'auto' | 'find';
-  region?: 'AU' | 'global';
+  region?: 'AU' | 'global' | 'US';
   login?: boolean;   // applying needs a login (informational)
   note?: string;     // shown in the catalog
 }
@@ -66,8 +66,10 @@ function scrapeExpr(s: BoardScrape): string {
 export const BOARDS: Board[] = [
   {
     id: 'linkedin', label: 'LinkedIn', granularity: 'minute',
+    // Force the Australia geo (geoId 101452733) so results are AU-based (Sydney /
+    // hybrid + AU-remote), not the US default. A typed city still rides in &location.
     buildUrl: (q, l, m) =>
-      `https://www.linkedin.com/jobs/search/?keywords=${enc(q)}${l ? `&location=${enc(l)}` : ''}&sortBy=DD${m ? `&f_TPR=r${m * 60}` : ''}`,
+      `https://www.linkedin.com/jobs/search/?keywords=${enc(q)}&location=${enc(l || 'Australia')}&geoId=101452733&sortBy=DD${m ? `&f_TPR=r${m * 60}` : ''}`,
     scrape: {
       anchor: 'a[href*="/jobs/view/"]',
       card: '.job-card-container, .base-card, .base-search-card, li',
@@ -104,9 +106,9 @@ export const BOARDS: Board[] = [
     },
   },
   {
-    id: 'glassdoor', label: 'Glassdoor', granularity: 'day',
+    id: 'glassdoor', label: 'Glassdoor (AU)', granularity: 'day', region: 'AU',
     buildUrl: (q, l, m) =>
-      `https://www.glassdoor.com/Job/jobs.htm?sc.keyword=${enc(q)}${l ? `&locKeyword=${enc(l)}` : ''}&sortBy=date_desc${m ? `&fromAge=${days(m)}` : ''}`,
+      `https://www.glassdoor.com.au/Job/jobs.htm?sc.keyword=${enc(q)}&locKeyword=${enc(l || 'Australia')}&sortBy=date_desc${m ? `&fromAge=${days(m)}` : ''}`,
     scrape: {
       anchor: 'a[data-test="job-link"], a[href*="/job-listing/"], a[href*="/partner/jobListing"]',
       card: 'li.react-job-listing, [data-test="jobListing"], li',
@@ -117,7 +119,7 @@ export const BOARDS: Board[] = [
     },
   },
   {
-    id: 'ziprecruiter', label: 'ZipRecruiter', granularity: 'day',
+    id: 'ziprecruiter', label: 'ZipRecruiter (US)', granularity: 'day', region: 'US',
     buildUrl: (q, l, m) =>
       `https://www.ziprecruiter.com/jobs-search?search=${enc(q)}${l ? `&location=${enc(l)}` : ''}${m ? `&days=${days(m)}` : ''}`,
     scrape: {
@@ -237,6 +239,18 @@ export function boardMode(b: Board, overrides?: Record<string, string>): 'auto' 
   return b.mode || 'auto';
 }
 
+// Keep AU + AU/global-remote postings; drop ones clearly located elsewhere (US etc.).
+// Unknown/blank location is kept (the fit-score step judges it). This is the AU-only
+// guard the user wants — Sydney / hybrid + remote-within-Australia.
+export function isAuOrRemote(loc: string): boolean {
+  const s = (loc || '').trim().toLowerCase();
+  if (!s) return true; // unknown → let fit-scoring decide
+  if (/australia|sydney|melbourne|brisbane|perth|adelaide|canberra|hobart|gold coast|newcastle|wollongong|geelong|\bnsw\b|\bvic\b|\bqld\b|\baus\b|\baustralian?\b/.test(s)) return true;
+  const elsewhere = /united states|\busa\b|\bu\.s\.|united kingdom|\buk\b|canada|india|singapore|germany|ireland|philippines|new york|san francisco|los angeles|london|austin|seattle|boston|chicago|toronto|bangalore|bengaluru|berlin|dublin|,\s*[a-z]{2}\b/.test(s);
+  if (/remote|anywhere|work from home|\bwfh\b/.test(s) && !elsewhere) return true; // AU/global remote
+  return !elsewhere;
+}
+
 // Run one board search and return normalized postings (best-effort, capped).
 export async function harvestSearch(board: Board, query: string, location: string, maxAgeMinutes = 0, slot = 0, max = 40): Promise<JobPosting[]> {
   await ensureBrowser();
@@ -250,7 +264,10 @@ export async function harvestSearch(board: Board, query: string, location: strin
     }
     const items = await evalInTab(tab, scrapeExpr(board.scrape)).catch(() => []);
     const arr: JobPosting[] = Array.isArray(items) ? items : [];
-    return arr.filter((p) => p && p.url && /^https?:/.test(p.url) && (p.title || '').trim()).slice(0, max);
+    return arr
+      .filter((p) => p && p.url && /^https?:/.test(p.url) && (p.title || '').trim())
+      .filter((p) => isAuOrRemote(p.location || ''))
+      .slice(0, max);
   } finally {
     await closeTab(tab);
   }

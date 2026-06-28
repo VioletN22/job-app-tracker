@@ -206,7 +206,8 @@ export function fitScorePrompt(p: JobPosting): string {
   const resume = resumeText();
   return (
     `Rate how well THIS job fits the user, 0-100, for the purpose of auto-applying on their behalf.\n` +
-    `Score high only for roles the user is genuinely a plausible candidate for (right field, right seniority, location/remote workable). Score low for wrong field, wrong seniority, or clear dealbreakers.\n\n` +
+    `Score high only for roles the user is genuinely a plausible candidate for (right field, right seniority, location/remote workable). Score low for wrong field, wrong seniority, or clear dealbreakers.\n` +
+    `LOCATION IS A HARD GATE: the user is in Sydney, Australia and can only take roles based in Australia (Sydney on-site/hybrid) OR remote within Australia. Score 0-10 for any role based outside Australia (e.g. United States, UK, India, Europe, or US-only "remote") and for roles that require work authorization the user lacks (e.g. US visa / US work authorization). Only treat "remote" as workable if it is open to Australia. If the location is blank/unknown, do not penalise on location.\n\n` +
     `JOB:\nTitle: ${p.title}\nCompany: ${p.company}\nLocation: ${p.location}\n${p.snippet ? 'Snippet: ' + p.snippet.slice(0, 600) + '\n' : ''}\n` +
     `USER PROFILE:\n${structuredProfileBlock()}\n\nUSER FACTS:\n${factsBlock()}\n` +
     (resume ? `\nUSER RESUME:\n${resume.slice(0, 4000)}\n` : '') +

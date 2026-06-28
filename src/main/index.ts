@@ -88,7 +88,7 @@ import { parseRepoRef } from './autopilot/github-jobs';
 import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
 import {
   runDrive, runFull, harvest, stopDrive, approveJob, approveAll, isDriveRunning,
-  pauseDrive, resumeDrive, skipCurrent, isPaused, openForApply, markApplied, pingStatus,
+  pauseDrive, resumeDrive, skipCurrent, isPaused, openForApply, markApplied, submitHeld, pingStatus,
   setSlotCount, getSlotCount, DriveDeps,
 } from './autopilot/orchestrator';
 import { BOARDS, boardMode } from './autopilot/sources';
@@ -599,6 +599,7 @@ ipcMain.handle('autopilot:drive:answerNeed', async (_e, id: string, value: strin
 });
 ipcMain.handle('autopilot:drive:dismissNeed', async (_e, id: string) => { dismissNeed(id); return { ok: true }; });
 ipcMain.handle('autopilot:drive:approve', async (_e, jobId: string) => approveJob(jobId, driveDeps));
+ipcMain.handle('autopilot:drive:submitHeld', async (_e, jobId: string) => submitHeld(jobId, driveDeps));
 ipcMain.handle('autopilot:drive:approveAll', async () => { approveAll(driveDeps); return { ok: true }; });
 ipcMain.handle('autopilot:drive:deleteJob', async (_e, id: string) => { deleteAutopilotJob(id); return { ok: true }; });
 ipcMain.handle('autopilot:drive:clearFinished', async () => { clearFinishedJobs(); return { ok: true }; });
