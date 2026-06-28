@@ -58,6 +58,17 @@ const electronAPI = {
   },
 
   // Autopilot: answer bank / document locker / voice profile
+  // Per-application cover letter: live company research + full personal context,
+  // generate / refine-with-feedback / copy, persisted on the application.
+  coverLetter: {
+    getForApp: (applicationId: string): Promise<CoverLetter | null> => ipcRenderer.invoke('coverletter:getForApp', applicationId),
+    generate: (opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string }): Promise<{ body: string; researched: boolean }> =>
+      ipcRenderer.invoke('coverletter:generate', opts),
+    refine: (opts: { applicationId: string; company: string; role: string; body: string; feedback: string; remember?: boolean; jobUrl?: string }): Promise<{ body: string }> =>
+      ipcRenderer.invoke('coverletter:refine', opts),
+    saveForApp: (opts: { applicationId: string; company: string; role: string; jobUrl?: string; body: string }): Promise<CoverLetter> =>
+      ipcRenderer.invoke('coverletter:saveForApp', opts),
+  },
   autopilot: {
     getAnswerBank: (): Promise<AnswerBankEntry[]> => ipcRenderer.invoke('autopilot:getAnswerBank'),
     upsertAnswer: (entry: Partial<AnswerBankEntry> & { label: string; value: string }): Promise<AnswerBankEntry> =>

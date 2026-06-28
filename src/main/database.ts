@@ -281,6 +281,8 @@ function runMigrations(): void {
   } catch {
     /* column already exists */
   }
+  // Link a cover-letter draft to its application (per-application cover letters).
+  try { db.exec(`ALTER TABLE cover_letters ADD COLUMN application_id TEXT`); } catch { /* already exists */ }
 
   // Autopilot fit-scoring columns for DBs created before Phase 2.
   try { db.exec(`ALTER TABLE autopilot_jobs ADD COLUMN fit_reason TEXT`); } catch { /* exists */ }
@@ -1156,7 +1158,7 @@ export function deletePortfolioLink(id: string): void {
 // ── Autopilot: cover-letter vault ────────────────────────────────────────────
 function rowToCover(r: any): CoverLetter {
   return {
-    id: r.id, company: r.company, role: r.role, jobUrl: r.job_url,
+    id: r.id, company: r.company, role: r.role, jobUrl: r.job_url, applicationId: r.application_id ?? null,
     body: r.body, isFinal: r.is_final === 1, createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -1164,6 +1166,28 @@ function rowToCover(r: any): CoverLetter {
 export function getCoverLetters(): CoverLetter[] {
   const db = getDatabase();
   return (db.prepare('SELECT * FROM cover_letters ORDER BY updated_at DESC').all() as any[]).map(rowToCover);
+}
+
+// The working cover-letter draft for a specific application (one per application).
+export function getCoverLetterForApplication(applicationId: string): CoverLetter | null {
+  const db = getDatabase();
+  const r = db.prepare('SELECT * FROM cover_letters WHERE application_id=? ORDER BY updated_at DESC LIMIT 1').get(applicationId);
+  return r ? rowToCover(r) : null;
+}
+
+export function saveCoverLetterForApplication(applicationId: string, input: { company: string; role: string; jobUrl?: string | null; body: string; isFinal?: boolean }): CoverLetter {
+  const db = getDatabase();
+  const now = new Date().toISOString();
+  const existing = db.prepare('SELECT id FROM cover_letters WHERE application_id=? LIMIT 1').get(applicationId) as any;
+  if (existing) {
+    db.prepare('UPDATE cover_letters SET company=?, role=?, job_url=?, body=?, is_final=?, updated_at=? WHERE id=?')
+      .run(input.company, input.role, input.jobUrl ?? null, input.body, input.isFinal ? 1 : 0, now, existing.id);
+    return rowToCover(db.prepare('SELECT * FROM cover_letters WHERE id=?').get(existing.id));
+  }
+  const id = randomUUID();
+  db.prepare('INSERT INTO cover_letters (id, company, role, job_url, application_id, body, is_final, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(id, input.company, input.role, input.jobUrl ?? null, applicationId, input.body, input.isFinal ? 1 : 0, now, now);
+  return rowToCover(db.prepare('SELECT * FROM cover_letters WHERE id=?').get(id));
 }
 
 export function saveCoverLetter(input: Partial<CoverLetter> & { company: string; role: string; body: string }): CoverLetter {

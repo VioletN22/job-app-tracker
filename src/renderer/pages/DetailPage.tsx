@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, MapPin, DollarSign, Calendar, ChevronDown, ChevronRight } from 'lucide-react';
+import { ArrowLeft, MapPin, DollarSign, Calendar, ChevronDown, ChevronRight, FileText, Sparkles, Copy, Check, RotateCcw, Send } from 'lucide-react';
 import { JobApplication, Workflow, StageHistory, JOB_SOURCES } from '../../shared/types';
 import { ChatPanel } from '../components/ChatPanel';
 import { Dropdown } from '../components/Dropdown';
@@ -331,6 +331,9 @@ export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack })
             </div>
           )}
 
+          {/* Cover letter — full context + live company research, refine + copy */}
+          <CoverLetterSection application={application} />
+
           {/* Assistant chat */}
           <ChatPanel
             applicationId={application.id}
@@ -426,6 +429,117 @@ export const DetailPage: React.FC<DetailPageProps> = ({ applicationId, onBack })
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ── Cover letter, in the application's own page ──────────────────────────────
+// Generate uses EVERYTHING aplyd knows about you (resume / portfolio / facts /
+// learned voice) + LIVE research on the company (their site, values, this year's
+// direction) + this job posting, matched to your resume. Refine it with plain
+// feedback in real time; copy the whole thing with one button. Saved per app.
+const cl = () => (window as any).electronAPI.coverLetter;
+
+const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ application }) => {
+  const role = application.job_title;
+  const company = application.company;
+  const jobText = [application.job_description, application.key_responsibilities, application.required_skills]
+    .filter(Boolean).join('\n\n');
+
+  const [body, setBody] = useState('');
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<'' | 'generating' | 'refining'>('');
+  const [feedback, setFeedback] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    cl().getForApp(application.id).then((d: any) => { if (d && d.body) { setBody(d.body); setOpen(true); } }).catch(() => {});
+  }, [application.id]);
+
+  const save = (text: string) => { cl().saveForApp({ applicationId: application.id, company, role, jobUrl: application.job_url, body: text }).catch(() => {}); };
+
+  const generate = async () => {
+    setBusy('generating'); setOpen(true); setNote('Researching ' + company + ' and drafting from your resume…');
+    try {
+      const res = await cl().generate({ applicationId: application.id, company, role, jobText, jobUrl: application.job_url });
+      setBody(res.body || '');
+      setNote(res.researched ? 'Drafted with live research on ' + company + '. Refine or copy below.' : 'Drafted from your profile + the posting (couldn’t fetch company research this time).');
+    } catch { setNote('Could not generate. Try again.'); }
+    finally { setBusy(''); }
+  };
+
+  const refine = async () => {
+    if (!feedback.trim()) return;
+    setBusy('refining'); setNote('Applying your feedback…');
+    try {
+      const res = await cl().refine({ applicationId: application.id, company, role, body, feedback: feedback.trim(), remember: true, jobUrl: application.job_url });
+      setBody(res.body || body); setFeedback(''); setNote('Updated. Keep refining, or copy it.');
+    } catch { setNote('Could not refine. Try again.'); }
+    finally { setBusy(''); }
+  };
+
+  const copy = async () => { try { await navigator.clipboard.writeText(body); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* ignore */ } };
+
+  const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, padding: '7px 12px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg,#fff)', color: 'var(--ink)', cursor: 'pointer' };
+  const accentBtn: React.CSSProperties = { ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' };
+  const working = busy !== '';
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <FileText size={14} style={{ color: 'var(--accent,#f23a17)' }} />
+        <p style={{ ...sectionLabel, margin: 0 }}>Cover letter</p>
+        {!open && (
+          <button onClick={generate} disabled={working} style={{ ...accentBtn, marginLeft: 'auto' }}>
+            <Sparkles size={13} /> {working ? 'Working…' : 'Generate cover letter'}
+          </button>
+        )}
+      </div>
+
+      {!open ? (
+        <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
+          I’ll pull everything I know about you (resume, portfolio, your voice), research {company} on the web (what they do, their values, where they’re heading this year), match it to what this role wants, and draft a letter you can refine and copy.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {note && <div style={{ fontSize: 11.5, color: working ? 'var(--accent,#f23a17)' : 'var(--muted)' }}>{note}</div>}
+
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            onBlur={() => body && save(body)}
+            placeholder={working ? '' : 'Your cover letter will appear here…'}
+            style={{ width: '100%', minHeight: 260, resize: 'vertical', padding: 14, borderRadius: 10, border: '1px solid var(--line)', background: 'var(--panel,#f3f2ee)', color: 'var(--ink)', fontSize: 13, lineHeight: 1.65, fontFamily: 'inherit', opacity: working ? 0.6 : 1 }}
+          />
+
+          {/* refine row */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') refine(); }}
+              disabled={working || !body}
+              placeholder="Tell me what to change (e.g. ‘shorter, lead with the React work, warmer tone’)…"
+              style={{ flex: 1, padding: '9px 12px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg,#fff)', color: 'var(--ink)', fontSize: 12.5 }}
+            />
+            <button onClick={refine} disabled={working || !body || !feedback.trim()} style={btn}>
+              <Send size={13} /> {busy === 'refining' ? 'Refining…' : 'Refine'}
+            </button>
+          </div>
+
+          {/* actions */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button onClick={copy} disabled={!body} style={accentBtn}>
+              {copied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy letter</>}
+            </button>
+            <button onClick={generate} disabled={working} style={btn}>
+              <RotateCcw size={13} /> {busy === 'generating' ? 'Regenerating…' : 'Regenerate'}
+            </button>
+            <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--muted)' }}>Saved to this application · feedback teaches your voice</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

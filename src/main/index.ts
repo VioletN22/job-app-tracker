@@ -61,6 +61,8 @@ import {
   getCoverLetters,
   saveCoverLetter,
   deleteCoverLetter,
+  getCoverLetterForApplication,
+  saveCoverLetterForApplication,
   enqueueJob,
   getAutopilotJobs,
   deleteAutopilotJob,
@@ -91,11 +93,11 @@ import {
   pauseDrive, resumeDrive, skipCurrent, isPaused, openForApply, markApplied, submitHeld, pingStatus,
   setSlotCount, getSlotCount, DriveDeps,
 } from './autopilot/orchestrator';
-import { BOARDS, boardMode } from './autopilot/sources';
+import { BOARDS, boardMode, researchCompany } from './autopilot/sources';
 import {
   shutdown as shutdownDriveBrowser, attachHost, setViewBounds, setViewsVisible,
 } from './autopilot/driver';
-import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot, profileSeedPrompt, parseProfileSeed, copilotPrompt, relatedRolesPrompt, parseRoles } from './autopilot-prompts';
+import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot, companyResearch, profileSeedPrompt, parseProfileSeed, copilotPrompt, relatedRolesPrompt, parseRoles } from './autopilot-prompts';
 import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
 import { getFlowData } from './flow';
 import { getLicenseStatus, activateLicense, deactivateLicense } from './license';
@@ -720,6 +722,30 @@ ipcMain.handle('autopilot:refineCoverLetter', async (_e, opts: { company: string
   const body = await runClaudeCLI(refineCoverLetterPrompt(opts), 90000);
   return { body: body.trim() };
 });
+
+// ── Per-application cover letter (lives in the application's detail page) ─────
+// Full context: everything aplyd knows about you (resume/portfolio/facts/voice) +
+// LIVE company research (their site/values/this year's direction) + the job posting,
+// matched to your resume. Generate → refine with feedback → copy. Persisted per app.
+ipcMain.handle('coverletter:getForApp', async (_e, applicationId: string) => getCoverLetterForApplication(applicationId));
+ipcMain.handle('coverletter:generate', async (_e, opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string }) => {
+  const portfolioText = await portfolioSnapshot().catch(() => '');
+  // Live research: prefer the in-app browser (real fingerprint); fall back to a
+  // plain web fetch if the browser path yields nothing.
+  let researchText = await researchCompany(opts.company, opts.jobUrl).catch(() => '');
+  if (!researchText) researchText = await companyResearch(opts.company, opts.jobUrl).catch(() => '');
+  const body = (await runClaudeCLI(coverLetterPrompt({ ...opts, portfolioText, researchText }), 120000)).trim();
+  try { saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body }); } catch { /* persist best-effort */ }
+  return { body, researched: !!researchText };
+});
+ipcMain.handle('coverletter:refine', async (_e, opts: { applicationId: string; company: string; role: string; body: string; feedback: string; remember?: boolean; jobUrl?: string }) => {
+  if (opts.remember && opts.feedback.trim()) addVoiceNote('style', opts.feedback.trim());
+  const body = (await runClaudeCLI(refineCoverLetterPrompt(opts), 90000)).trim();
+  try { saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body }); } catch { /* persist best-effort */ }
+  return { body };
+});
+ipcMain.handle('coverletter:saveForApp', async (_e, opts: { applicationId: string; company: string; role: string; jobUrl?: string; body: string }) =>
+  saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body: opts.body }));
 
 // Attachment Operations IPC Handlers
 

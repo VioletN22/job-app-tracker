@@ -78,6 +78,77 @@ export function fetchUrlText(url: string, timeoutMs = 6000): Promise<string> {
   });
 }
 
+// Raw fetch (HTML kept) — used to parse search-result links. Browser-like UA so
+// search endpoints don't 403 us. Caps the body and never rejects.
+export function fetchUrlRaw(url: string, timeoutMs = 7000): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      const lib = url.startsWith('https') ? https : http;
+      const headers = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36', 'Accept-Language': 'en-AU,en;q=0.9' };
+      const req = lib.get(url, { headers }, (res) => {
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          fetchUrlRaw(new URL(res.headers.location, url).toString(), timeoutMs).then(resolve);
+          return;
+        }
+        let data = '';
+        res.on('data', (c) => { if (data.length < 400000) data += c; });
+        res.on('end', () => resolve(data));
+      });
+      req.setTimeout(timeoutMs, () => { req.destroy(); resolve(''); });
+      req.on('error', () => resolve(''));
+    } catch { resolve(''); }
+  });
+}
+
+// LIVE company research for cover letters: web-search the company and read a couple
+// of their own pages, so the letter can speak to what they do, recent work, this
+// year's goals, and values. Best-effort + capped; returns '' on failure (the letter
+// then leans on the job posting + the model's own knowledge).
+export async function companyResearch(company: string, jobUrl?: string): Promise<string> {
+  const name = (company || '').trim();
+  if (!name) return '';
+  const year = new Date().getFullYear();
+  const enc = (s: string) => encodeURIComponent(s);
+  const pickLinks = (html: string): string[] => {
+    const urls: string[] = [];
+    const re = /uddg=([^"&]+)/g; // DuckDuckGo HTML wraps results as /l/?uddg=<encoded>
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) && urls.length < 30) {
+      try { const u = decodeURIComponent(m[1]); if (/^https?:\/\//.test(u)) urls.push(u); } catch { /* skip */ }
+    }
+    return urls;
+  };
+  const junk = /duckduckgo|google\.|bing\.|facebook\.|twitter\.|x\.com|instagram\.|youtube\.|wikipedia\.|glassdoor\.|indeed\.|linkedin\.com\/(?!company)|crunchbase\.|bloomberg\.|zoominfo/i;
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const score = (u: string) => {
+    let s = 0;
+    try {
+      const host = new URL(u).host.toLowerCase();
+      if (host.replace(/[^a-z0-9]/g, '').includes(slug.slice(0, 8))) s += 5; // their own domain
+    } catch { /* ignore */ }
+    if (/about|values|mission|culture|careers|company|who-we-are|annual|investor|sustainab|strateg/i.test(u)) s += 2;
+    return s;
+  };
+  // two angles: who they are / values, and this year's direction
+  const queries = [name + ' company about values mission', name + ' ' + year + ' strategy goals annual report'];
+  const candidates: string[] = [];
+  for (const q of queries) {
+    const html = await fetchUrlRaw('https://html.duckduckgo.com/html/?q=' + enc(q)).catch(() => '');
+    for (const u of pickLinks(html)) if (!junk.test(u) && !candidates.includes(u)) candidates.push(u);
+  }
+  // prefer their own / about-ish pages; always consider the job's own host too
+  if (jobUrl) { try { candidates.unshift(new URL(jobUrl).origin); } catch { /* ignore */ } }
+  const ranked = candidates.sort((a, b) => score(b) - score(a)).slice(0, 3);
+  const chunks: string[] = [];
+  for (const u of ranked) {
+    const t = await fetchUrlText(u, 7000).catch(() => '');
+    if (t && t.length > 120) chunks.push('SOURCE ' + u + ':\n' + t.slice(0, 1600));
+    if (chunks.length >= 2) break;
+  }
+  return chunks.join('\n\n').slice(0, 3500);
+}
+
 // Pull a short text snapshot of the default/first portfolio site for grounding.
 export async function portfolioSnapshot(): Promise<string> {
   const links = getPortfolioLinks();
@@ -132,13 +203,15 @@ function profileBlock(opts: { resumeText?: string; portfolioText?: string; extra
   );
 }
 
-export function coverLetterPrompt(opts: { company: string; role: string; jobText?: string; portfolioText?: string; resumeText?: string; extra?: string }): string {
+export function coverLetterPrompt(opts: { company: string; role: string; jobText?: string; portfolioText?: string; resumeText?: string; researchText?: string; extra?: string }): string {
   return (
     `Write a cover letter for the user, first person, tailored to THIS specific role. ` +
     `Ground every claim in the user's real experience (resume, portfolio, known facts) — do NOT invent anything.\n\n` +
     `ROLE: ${opts.role}\nCOMPANY: ${opts.company}\n\n` +
     (opts.jobText ? `JOB POSTING:\n${opts.jobText.slice(0, 4000)}\n\n` : '') +
+    (opts.researchText ? `COMPANY RESEARCH (pulled from the web — use it to show genuine, specific knowledge of the company: what they do, recent work, this year's direction/goals, and their values. Weave in 1-2 concrete, accurate details; never fabricate or overstate):\n${opts.researchText}\n\n` : '') +
     profileBlock(opts) +
+    `Approach: read what the role actually wants (from the job posting), then MATCH the user's real resume experience to those needs — lead with the overlaps that matter most, and connect them to where the company is heading. ` +
     `Keep it to 3-4 tight paragraphs, specific and genuine, no corporate fluff or clichés. ` +
     `Respond with ONLY the cover letter body (no header, address block, or commentary).`
   );

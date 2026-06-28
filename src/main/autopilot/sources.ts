@@ -251,6 +251,55 @@ export function isAuOrRemote(loc: string): boolean {
   return !elsewhere;
 }
 
+// LIVE company research for cover letters, using the in-app browser (a real
+// fingerprint, so search engines render results instead of a bot-challenge). We
+// Bing-search the company, open a couple of their own pages, and return the text —
+// what they do, their values, where they're heading. Best-effort; '' on failure.
+export async function researchCompany(company: string, jobUrl = '', slot = 2): Promise<string> {
+  const name = (company || '').trim();
+  if (!name) return '';
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const year = new Date().getFullYear();
+  const junk = /bing\.|microsoft\.|msn\.|go\.microsoft|duckduckgo|google\.|facebook\.|twitter\.|x\.com|instagram\.|youtube\.|tiktok\.|wikipedia\.|glassdoor\.|indeed\.|seek\.|linkedin\.com\/(?!company)|crunchbase\.|zoominfo|reddit\./i;
+  const linksExpr =
+    '(function(){var out=[];var seen={};' +
+    'document.querySelectorAll(\'#b_results li.b_algo a[href^="http"], #b_results h2 a[href^="http"], main a[href^="http"]\').forEach(function(a){' +
+    'var h=a.href;if(!h||seen[h])return;seen[h]=1;out.push(h);});return out.slice(0,12);})()';
+  const textExpr = '(document.body?document.body.innerText:"").replace(/\\s+/g," ").slice(0,2200)';
+  const collected: string[] = [];
+  let tab: any = null;
+  try {
+    await ensureBrowser();
+    // 1) search → candidate links
+    const q = enc(name + ' company about values mission ' + year + ' strategy');
+    tab = await openJob('https://www.bing.com/search?q=' + q, noBridge, slot);
+    await sleep(1200);
+    let links: string[] = [];
+    try { links = await evalInTab(tab, linksExpr); } catch { links = []; }
+    if (jobUrl) { try { links.unshift(new URL(jobUrl).origin); } catch { /* ignore */ } }
+    const score = (u: string) => {
+      let s = 0;
+      try { if (new URL(u).host.toLowerCase().replace(/[^a-z0-9]/g, '').includes(slug.slice(0, 8))) s += 5; } catch { /* ignore */ }
+      if (/about|values|mission|culture|who-we-are|company|careers|annual|investor|impact|sustainab|strateg/i.test(u)) s += 2;
+      return s;
+    };
+    const ranked = Array.from(new Set(links.filter((u) => /^https?:/.test(u) && !junk.test(u))))
+      .sort((a, b) => score(b) - score(a)).slice(0, 4);
+    // 2) read the top couple of their own pages
+    for (const u of ranked) {
+      if (collected.length >= 2) break;
+      try {
+        const t2 = await openJob(u, noBridge, slot);
+        await sleep(900);
+        const txt = await evalInTab(t2, textExpr).catch(() => '');
+        if (txt && String(txt).length > 200) collected.push('SOURCE ' + u + ':\n' + String(txt));
+      } catch { /* skip this page */ }
+    }
+  } catch { /* research is best-effort */ }
+  finally { if (tab) { try { await closeTab(tab); } catch { /* ignore */ } } }
+  return collected.join('\n\n').slice(0, 3500);
+}
+
 // Run one board search and return normalized postings (best-effort, capped).
 export async function harvestSearch(board: Board, query: string, location: string, maxAgeMinutes = 0, slot = 0, max = 40): Promise<JobPosting[]> {
   await ensureBrowser();
