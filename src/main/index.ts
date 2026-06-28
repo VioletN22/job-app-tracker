@@ -729,16 +729,32 @@ ipcMain.handle('autopilot:refineCoverLetter', async (_e, opts: { company: string
 // matched to your resume. Generate → refine with feedback → copy. Persisted per app.
 ipcMain.handle('coverletter:getForApp', async (_e, applicationId: string) => getCoverLetterForApplication(applicationId));
 ipcMain.handle('coverletter:generate', async (_e, opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string; location?: string }) => {
-  const portfolioText = await portfolioSnapshot().catch(() => '');
-  // Live research: prefer the in-app browser (real fingerprint, location-grounded);
-  // fall back to a plain web fetch if the browser path yields nothing.
-  const r = await researchCompany(opts.company, opts.jobUrl, opts.location).catch(() => ({ text: '', sources: [] as string[] }));
-  let researchText = r.text;
-  let sources = r.sources;
-  if (!researchText) { researchText = await companyResearch(opts.company, opts.jobUrl).catch(() => ''); sources = (researchText.match(/SOURCE (\S+):/g) || []).map((m) => m.replace(/^SOURCE |:$/g, '')); }
-  const body = (await runClaudeCLI(coverLetterPrompt({ ...opts, portfolioText, researchText }), 120000)).trim();
-  try { saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body }); } catch { /* persist best-effort */ }
-  return { body, researched: !!researchText, sources };
+  const emit = (stage: string, message: string) => { try { mainWindow?.webContents.send('coverletter:progress', { applicationId: opts.applicationId, stage, message }); } catch { /* ignore */ } };
+  const t0 = Date.now();
+  try {
+    log('[cover] generate start', opts.company, opts.role);
+    emit('research', 'Researching ' + opts.company + ' on the web…');
+    const portfolioText = await portfolioSnapshot().catch(() => '');
+    // Live research: prefer the in-app browser (real fingerprint, location-grounded);
+    // fall back to a plain web fetch if the browser path yields nothing.
+    const r = await researchCompany(opts.company, opts.jobUrl, opts.location).catch((e) => { log('[cover] researchCompany err', String(e)); return { text: '', sources: [] as string[] }; });
+    let researchText = r.text;
+    let sources = r.sources;
+    if (!researchText) { researchText = await companyResearch(opts.company, opts.jobUrl).catch(() => ''); sources = (researchText.match(/SOURCE (\S+):/g) || []).map((m) => m.replace(/^SOURCE |:$/g, '')); }
+    log('[cover] research done', 'chars=' + researchText.length, 'sources=' + sources.length, Math.round((Date.now() - t0) / 1000) + 's');
+    emit('writing', researchText ? 'Read ' + (sources.length || 1) + ' source(s) — now writing your letter…' : 'Writing your letter from your profile + the posting…');
+    const body = (await runClaudeCLI(coverLetterPrompt({ ...opts, portfolioText, researchText }), 180000)).trim();
+    if (!body) throw new Error('empty draft returned');
+    try { saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body }); } catch { /* persist best-effort */ }
+    log('[cover] generate done', Math.round((Date.now() - t0) / 1000) + 's', 'len=' + body.length);
+    emit('done', 'Done');
+    return { body, researched: !!researchText, sources };
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    log('[cover] generate FAILED', msg, Math.round((Date.now() - t0) / 1000) + 's');
+    emit('error', /timed out/i.test(msg) ? 'timeout' : 'error');
+    return { body: '', researched: false, sources: [], error: /timed out/i.test(msg) ? 'The draft took too long (the AI was busy). Try again in a moment.' : ('Could not generate: ' + msg) };
+  }
 });
 ipcMain.handle('coverletter:refine', async (_e, opts: { applicationId: string; company: string; role: string; body: string; feedback: string; remember?: boolean; jobUrl?: string }) => {
   if (opts.remember && opts.feedback.trim()) addVoiceNote('style', opts.feedback.trim());

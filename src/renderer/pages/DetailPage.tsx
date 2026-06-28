@@ -453,23 +453,40 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
   const [copied, setCopied] = useState(false);
   const [note, setNote] = useState('');
   const [sources, setSources] = useState<string[]>([]);
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
     cl().getForApp(application.id).then((d: any) => { if (d && d.body) { setBody(d.body); setOpen(true); } }).catch(() => {});
   }, [application.id]);
 
+  // live staged status from the main process (research → writing → done)
+  useEffect(() => {
+    const off = cl().onProgress((p: any) => { if (p.applicationId === application.id && p.message && p.stage !== 'done' && p.stage !== 'error') setNote(p.message); });
+    return () => { try { off && off(); } catch { /* ignore */ } };
+  }, [application.id]);
+
+  // elapsed-seconds ticker while working, so it never looks frozen
+  const working = busy !== '';
+  useEffect(() => {
+    if (!working) return;
+    setElapsed(0);
+    const t = window.setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [working]);
+
   const save = (text: string) => { cl().saveForApp({ applicationId: application.id, company, role, jobUrl: application.job_url, body: text }).catch(() => {}); };
 
   const generate = async () => {
-    setBusy('generating'); setOpen(true); setSources([]); setNote('Researching ' + company + ' (cross-checking against this listing) and drafting from your resume…');
+    setBusy('generating'); setOpen(true); setSources([]); setNote('Starting — researching ' + company + ' and cross-checking against this listing…');
     try {
       const res = await cl().generate({ applicationId: application.id, company, role, jobText, jobUrl: application.job_url, location: application.location });
+      if (res.error) { setNote(res.error); return; }
       setBody(res.body || '');
       setSources(res.sources || []);
       setNote(res.researched
         ? 'Drafted using the sources below (it ignores anything that doesn’t match this listing). Check they’re the right company, then refine or copy.'
         : 'Drafted from your profile + the posting (couldn’t fetch company research this time — so no company-specific claims were invented).');
-    } catch { setNote('Could not generate. Try again.'); }
+    } catch (e: any) { setNote('Could not generate: ' + String(e?.message || e)); }
     finally { setBusy(''); }
   };
 
@@ -487,7 +504,6 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
 
   const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, padding: '7px 12px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg,#fff)', color: 'var(--ink)', cursor: 'pointer' };
   const accentBtn: React.CSSProperties = { ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' };
-  const working = busy !== '';
 
   return (
     <div>
@@ -507,7 +523,14 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {note && <div style={{ fontSize: 11.5, color: working ? 'var(--accent,#f23a17)' : 'var(--muted)' }}>{note}</div>}
+          {note && (
+            <div style={{ fontSize: 11.5, color: working ? 'var(--accent,#f23a17)' : 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {working && <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 6, background: 'var(--accent,#f23a17)', animation: 'pulse 1s ease-in-out infinite' }} />}
+              <span>{note}</span>
+              {working && <span style={{ opacity: 0.7 }}>· {elapsed}s</span>}
+            </div>
+          )}
+          {working && <div className="aplyd-bar" />}
 
           {/* the exact pages the research read — so you can verify the right company */}
           {sources.length > 0 && (
