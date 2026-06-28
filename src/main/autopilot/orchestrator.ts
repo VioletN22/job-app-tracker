@@ -207,7 +207,8 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
 
     let totalFilled = 0;
     let reachedReview = false;
-    let triedExternal = false;   // have we already clicked through to the off-site form?
+    let triedResolve = false;    // resolved a LinkedIn offsite job to its real apply URL?
+    let triedClick = false;      // clicked an "Apply" button on the company/board page?
 
     for (let step = 0; step < MAX_STEPS; step++) {
       if (cancelled) break;
@@ -221,30 +222,42 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
       if (!res) { if (step === 0) throw new Error('no form / page blocked (login or captcha?)'); break; }
       if (res.opening) { await sleep(rand(1200, 2200)); continue; } // Easy Apply modal opening
       if (res.noForm) {
-        // No fillable form on this page. Get to the REAL application once, then re-scan.
-        const isLinkedIn = /linkedin\.com/i.test(job.url || '');
-        if (!triedExternal) {
-          triedExternal = true;
-          if (isLinkedIn) {
-            // LinkedIn's offsite "Apply" redirect 404s inside an embedded view (even on
-            // a real click). Skip it: ask LinkedIn's own data for the company's real
-            // application URL and load THAT directly — lands on the actual ATS page.
-            let ext: string | null = null;
-            try { ext = await evalInTab(tab, 'window.AplydDrive.getLinkedInApplyUrl()'); } catch { ext = null; }
-            if (ext && /^https?:/i.test(ext)) {
-              emitStatus(deps, `Opening ${company}'s real application page…`, job.id);
-              try { await tab.wc.loadURL(ext); await sleep(rand(2800, 3800)); await ensureInjected(tab, ctx); } catch { /* ignore */ }
-              continue; // re-scan the company page (fillable form, or hand off)
-            }
-          } else {
-            // direct ATS / board page: an "Apply" button usually leads to the form.
-            let clicked = false;
-            try { clicked = await evalInTab(tab, 'window.AplydDrive.clickExternalApply()'); } catch { clicked = false; }
-            if (clicked) {
-              emitStatus(deps, `Opening the application for ${company} right here…`, job.id);
-              await sleep(rand(3200, 4200));
-              continue; // re-scan the page that just loaded
-            }
+        // No fillable form on THIS page yet. Work toward the real application, re-scan.
+        let curUrl = job.url;
+        try { curUrl = tab.wc.getURL() || job.url; } catch { /* keep job.url */ }
+        const onLinkedIn = /linkedin\.com/i.test(curUrl);
+
+        // (a) On a LinkedIn job page: its offsite "Apply" redirect 404s in an embedded
+        // view, so ask LinkedIn's own data for the company's real apply URL and load
+        // THAT directly — lands on the actual ATS page.
+        if (onLinkedIn && !triedResolve) {
+          triedResolve = true;
+          let ext: string | null = null;
+          try { ext = await evalInTab(tab, 'window.AplydDrive.getLinkedInApplyUrl()'); } catch { ext = null; }
+          if (ext && /^https?:/i.test(ext)) {
+            emitStatus(deps, `Opening ${company}'s real application page…`, job.id);
+            try { await tab.wc.loadURL(ext); await sleep(rand(3000, 4200)); await ensureInjected(tab, ctx); } catch { /* ignore */ }
+            continue; // re-scan the company page (fillable form, or hand off)
+          }
+        }
+        // (b) On the company / board page: an "Apply" button often reveals the form.
+        // Click it once, and give a late-rendering embedded form a moment to appear.
+        if (!onLinkedIn && !triedClick) {
+          triedClick = true;
+          let clicked = false;
+          try { clicked = await evalInTab(tab, 'window.AplydDrive.clickExternalApply()'); } catch { clicked = false; }
+          emitStatus(deps, clicked ? `Opening the application for ${company} right here…` : `Looking for ${company}'s application form…`, job.id);
+          await sleep(clicked ? rand(3200, 4200) : 2200);
+          await ensureInjected(tab, ctx);
+          if (await evalInTab(tab, 'window.AplydDrive.hasForm()').catch(() => false)) continue; // form appeared → fill it
+          // The form may be an embedded cross-origin ATS iframe we can't fill in place.
+          // Load that iframe as a top-level page so it becomes fillable.
+          let frameUrl: string | null = null;
+          try { frameUrl = await evalInTab(tab, 'window.AplydDrive.getApplyFrameUrl()'); } catch { frameUrl = null; }
+          if (frameUrl && /^https?:/i.test(frameUrl)) {
+            emitStatus(deps, `Opening ${company}'s application form…`, job.id);
+            try { await tab.wc.loadURL(frameUrl); await sleep(rand(2800, 3800)); await ensureInjected(tab, ctx); } catch { /* ignore */ }
+            continue; // re-scan the now top-level form
           }
         }
         // If a navigation left us on a dead / 404 page, restore the real posting so
@@ -273,7 +286,7 @@ async function fillJob(job: AutopilotJob, deps: DriveDeps, slot = 0): Promise<vo
       // answer (it resumes this same app with your answer) or skip it (it goes to
       // your "started, not finished" vault and the agent continues to the next).
       // drop junk (a stray site search box etc.) — never park "Search"/empty labels
-      const realNeeds = (res.needs || []).filter((n: any) => { const nl = norm(n.label); return nl && nl !== 'search' && !nl.startsWith('search '); });
+      const realNeeds = (res.needs || []).filter((n: any) => { const nl = norm(n.label); return nl && !/\bsearch\b/.test(nl); });
       if (realNeeds.length) {
         for (const n of realNeeds) upsertNeed({ label: n.label, kind: n.kind, options: n.options, hint: n.hint });
         const pending = realNeeds.map((n: any) => norm(n.label));

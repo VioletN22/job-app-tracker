@@ -123,10 +123,15 @@ export const INJECTED_SOURCE = String.raw`
   }
   function looksLikeChromeField(el, label) {
     if (inChrome(el)) return true;
+    if ((el.getAttribute('type') || '').toLowerCase() === 'search') return true;
+    if ((el.getAttribute('role') || '').toLowerCase() === 'searchbox') return true;
+    if (el.closest('form[role="search"], [role="search"]')) return true;
     var l = (label || '').toLowerCase();
     var ph = (el.getAttribute('placeholder') || '').toLowerCase();
     var aria = (el.getAttribute('aria-label') || '').toLowerCase();
-    return /^search\b|search (jobs|by|for)|global search/.test(l + ' ' + ph + ' ' + aria);
+    var name = ((el.getAttribute('name') || '') + ' ' + (el.id || '')).toLowerCase();
+    // any field that is a search box ("search", "type search…", search name/id) is page chrome
+    return /\bsearch\b/.test(l + ' ' + ph + ' ' + aria + ' ' + name);
   }
 
   function collectFields(root) {
@@ -237,17 +242,36 @@ export const INJECTED_SOURCE = String.raw`
       return !looksLikeChromeField(el, labelFor(el));
     }).length;
   }
+  // The top document plus any SAME-ORIGIN iframe documents (embedded ATS forms,
+  // e.g. Greenhouse/Ashby widgets). Cross-origin frames throw → skipped (we can't
+  // fill those; the user finishes them by hand).
+  function accessibleDocs() {
+    var docs = [document];
+    var frames = [].slice.call(document.querySelectorAll('iframe'));
+    for (var i = 0; i < frames.length; i++) {
+      try { var d = frames[i].contentDocument; if (d && d.body) docs.push(d); } catch (e) { /* cross-origin */ }
+    }
+    return docs;
+  }
   function getFormRoot() {
-    // LinkedIn Easy Apply modal first
-    var modal = document.querySelector('.jobs-easy-apply-modal, [data-test-modal][role="dialog"], div[role="dialog"]');
-    if (modal && isVisible(modal) && realFieldCount(modal) > 0) return modal;
-    // otherwise the visible form with the most REAL fields
-    var forms = [].slice.call(document.querySelectorAll('form')).filter(isVisible);
+    var docs = accessibleDocs();
+    // an explicit apply modal / dialog in any accessible doc first
+    for (var k = 0; k < docs.length; k++) {
+      var modal = docs[k].querySelector('.jobs-easy-apply-modal, [data-test-modal][role="dialog"], div[role="dialog"]');
+      if (modal && isVisible(modal) && realFieldCount(modal) > 0) return modal;
+    }
+    // otherwise the visible <form> with the most REAL fields, across all docs
     var best = null, bestN = 0;
-    forms.forEach(function (fm) { var n = realFieldCount(fm); if (n > bestN) { bestN = n; best = fm; } });
+    for (var m = 0; m < docs.length; m++) {
+      [].slice.call(docs[m].querySelectorAll('form')).filter(isVisible).forEach(function (fm) {
+        var n = realFieldCount(fm); if (n > bestN) { bestN = n; best = fm; }
+      });
+    }
     if (best && bestN > 0) return best;
-    // last resort: the whole document, but only if it has real application fields
-    if (realFieldCount(document.body) > 0) return document.body;
+    // last resort: any accessible doc body that has real application fields
+    for (var p = 0; p < docs.length; p++) {
+      if (docs[p].body && realFieldCount(docs[p].body) > 0) return docs[p].body;
+    }
     return null; // no application form here (e.g. a job description / external-apply page)
   }
 
@@ -377,6 +401,22 @@ export const INJECTED_SOURCE = String.raw`
     } catch (e) { return Promise.resolve(null); }
   }
 
+  // If the application is an embedded CROSS-ORIGIN ATS iframe (Greenhouse/Lever/
+  // Ashby/Workday/etc.) that we can't fill from the top page, return its src so the
+  // driver can load it as a top-level page (then it's same-origin and fillable).
+  function getApplyFrameUrl() {
+    var frames = [].slice.call(document.querySelectorAll('iframe'));
+    var ats = /greenhouse|lever\.co|ashbyhq|myworkdayjobs|workdayjobs|smartrecruiters|jobvite|icims|bamboohr|workable|breezy|teamtailor|recruitee|join\.com|pinpoint|paylocity|rippling/i;
+    for (var i = 0; i < frames.length; i++) {
+      var src = frames[i].getAttribute('src') || '';
+      if (src.indexOf('http') !== 0 || !isVisible(frames[i])) continue;
+      var crossOrigin = false;
+      try { crossOrigin = !frames[i].contentDocument; } catch (e) { crossOrigin = true; }
+      if (crossOrigin && (ats.test(src) || /apply|job|career/i.test(src))) return src;
+    }
+    return null;
+  }
+
   // True when the page is an error / not-found page (no real form, and the visible
   // text reads like a 404). Used to recover after a bad navigation.
   function looksDead() {
@@ -392,6 +432,7 @@ export const INJECTED_SOURCE = String.raw`
     footer: footer,
     clickExternalApply: clickExternalApply,
     getLinkedInApplyUrl: getLinkedInApplyUrl,
+    getApplyFrameUrl: getApplyFrameUrl,
     looksDead: looksDead,
     hasForm: function () { return !!getFormRoot(); },
   };

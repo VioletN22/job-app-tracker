@@ -289,7 +289,7 @@ function runMigrations(): void {
   try { db.exec(`ALTER TABLE saved_searches ADD COLUMN max_age_minutes INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
   // Purge junk needs captured before the nav/search-field fix (e.g. a site's
   // global "Search" box mistaken for a form field).
-  try { db.exec(`DELETE FROM autopilot_needs WHERE norm_label IN ('search','') OR norm_label LIKE 'search %'`); } catch { /* table may not exist yet */ }
+  try { db.exec(`DELETE FROM autopilot_needs WHERE norm_label='' OR norm_label LIKE '%search%'`); } catch { /* table may not exist yet */ }
 
   // One-time backfill: stamp every application that predates the job_source
   // field as 'LinkedIn' (where they were all sourced from). Gated on
