@@ -525,6 +525,9 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
 
   const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, padding: '7px 12px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg,#fff)', color: 'var(--ink)', cursor: 'pointer' };
   const accentBtn: React.CSSProperties = { ...btn, background: 'var(--accent,#f23a17)', color: '#fff', borderColor: 'var(--accent,#f23a17)' };
+  // ghost = quieter secondary action; link = borderless inline action
+  const ghostBtn: React.CSSProperties = { ...btn, background: 'transparent', color: 'var(--muted)' };
+  const linkBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, padding: '3px 6px', borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--accent,#f23a17)', cursor: 'pointer' };
 
   return (
     <div>
@@ -588,46 +591,55 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
             </button>
           </div>
 
-          {/* actions */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* action bar — primary (copy) on the left, secondary grouped on the right */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid var(--line)', paddingTop: 12, marginTop: 2 }}>
             <button onClick={copy} disabled={!body} style={accentBtn}>
               {copied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy letter</>}
             </button>
-            <button onClick={saveVersion} disabled={working || !body} title="Keep this version — saves to aplyd AND as a labelled PDF in your folder" style={btn}>
-              <Save size={13} /> {busy === 'saving' ? 'Saving…' : 'Save version + PDF'}
-            </button>
-            <button onClick={generate} disabled={working} style={btn}>
-              <RotateCcw size={13} /> {busy === 'generating' ? 'Regenerating…' : 'Regenerate'}
-            </button>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button onClick={saveVersion} disabled={working || !body} title="Keep this version — saves to aplyd AND as a labelled PDF in your folder" style={btn}>
+                <Save size={13} /> {busy === 'saving' ? 'Saving…' : 'Save version + PDF'}
+              </button>
+              <button onClick={generate} disabled={working} title="Draft a fresh letter" style={ghostBtn}>
+                <RotateCcw size={13} /> {busy === 'generating' ? 'Regenerating…' : 'Regenerate'}
+              </button>
+            </div>
           </div>
 
-          {saveMsg && <div style={{ fontSize: 11, color: 'var(--ink)', wordBreak: 'break-all' }}>{saveMsg}</div>}
-
-          {/* PDF folder */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted)', flexWrap: 'wrap' }}>
-            <span>PDF folder:</span>
-            <span title={dir} style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink)' }}>{dir || '…'}</span>
-            <button onClick={changeDir} style={{ ...btn, padding: '3px 8px', fontSize: 10.5 }}>Change</button>
-            <button onClick={() => cl().openFolder()} style={{ ...btn, padding: '3px 8px', fontSize: 10.5 }}><FolderOpen size={11} /> Open</button>
-          </div>
+          {saveMsg && (
+            <div style={{ fontSize: 11, color: 'var(--ink)', display: 'flex', gap: 6, alignItems: 'flex-start', background: 'rgba(31,157,85,.07)', border: '1px solid rgba(31,157,85,.25)', borderRadius: 8, padding: '7px 10px' }}>
+              <Check size={13} style={{ color: '#1f9d55', flex: 'none', marginTop: 1 }} />
+              <span style={{ wordBreak: 'break-all' }}>{saveMsg}</span>
+            </div>
+          )}
 
           {/* saved versions */}
           {versions.length > 0 && (
-            <div style={{ borderTop: '1px solid var(--line)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <p style={{ ...sectionLabel, margin: 0 }}>Saved versions ({versions.length})</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <p style={{ ...sectionLabel, margin: '2px 0 2px' }}>Saved versions ({versions.length})</p>
               {versions.map((v) => (
-                <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg,#fff)' }}>
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg,#fff)' }}>
                   <FileText size={12} style={{ color: 'var(--accent,#f23a17)', flex: 'none' }} />
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.label || (company + ' - ' + role)}</span>
                   <span style={{ fontSize: 10, color: 'var(--muted)' }}>{new Date(v.updatedAt).toLocaleDateString()}</span>
-                  <button onClick={() => loadVersion(v)} title="Load this version into the editor" style={{ ...btn, padding: '3px 8px', fontSize: 10.5 }}><Download size={11} /> Load</button>
-                  <button onClick={() => deleteVersion(v.id)} title="Delete this saved version" style={{ ...btn, padding: '3px 8px', fontSize: 10.5, color: 'var(--muted)' }}><Trash2 size={11} /></button>
+                  <button onClick={() => loadVersion(v)} title="Load this version into the editor" style={linkBtn}><Download size={12} /> Load</button>
+                  <button onClick={() => deleteVersion(v.id)} title="Delete this saved version" style={{ ...linkBtn, color: 'var(--muted)' }}><Trash2 size={12} /></button>
                 </div>
               ))}
             </div>
           )}
 
-          <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>Draft auto-saves to this application · “Save version + PDF” keeps a copy in aplyd and writes a labelled PDF · feedback teaches your voice</span>
+          {/* quiet settings footer: where PDFs go + microcopy */}
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 9, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--muted)' }}>
+              <FolderOpen size={12} style={{ flex: 'none' }} />
+              <span>PDF folder</span>
+              <span title={dir} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink)' }}>{dir || '…'}</span>
+              <button onClick={changeDir} style={linkBtn}>Change</button>
+              <button onClick={() => cl().openFolder()} style={linkBtn}>Open</button>
+            </div>
+            <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>Draft auto-saves here · “Save version + PDF” keeps a copy in aplyd and writes a labelled PDF · feedback teaches your voice.</span>
+          </div>
         </div>
       )}
     </div>
