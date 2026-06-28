@@ -29,7 +29,7 @@ jobs:
         run: npm run build
 
       - name: Package Windows app
-        run: npx electron-builder --config electron-builder.win.js --win --x64
+        run: npx electron-builder --config electron-builder.win.js --win --x64 --publish never
 
       - name: Stage artifacts (exe + extension + readme)
         shell: bash

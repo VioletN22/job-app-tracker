@@ -9,6 +9,7 @@ module.exports = {
   files: [
     'dist/main/**/*',
     'dist/renderer/**/*',
+    'dist/shared/**/*',
     'node_modules/**/*',
     'package.json',
     'assets/**/*',
