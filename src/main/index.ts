@@ -104,6 +104,7 @@ import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication
 import { getFlowData } from './flow';
 import { getLicenseStatus, activateLicense, deactivateLicense } from './license';
 import { JobApplication, Workflow, ExtractedJobData } from '../shared/types';
+import { LITE } from '../shared/edition';
 
 let mainWindow: BrowserWindow | null = null;
 let isStarting = false;
@@ -302,7 +303,9 @@ app.whenReady().then(() => {
       },
     });
     log('[autopilot] bridge listening on 127.0.0.1:' + AUTOPILOT_PORT);
-    rescheduleDaily(); // start the daily-run ticker (gated by the master toggle)
+    // Full build only: the autonomous daily/fresh-watch applier. The lite (friend)
+    // build keeps the extension bridge above but never runs the in-app applier.
+    if (!LITE) rescheduleDaily();
   } catch (e) {
     log('[autopilot] failed to start bridge', e);
   }

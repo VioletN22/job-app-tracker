@@ -12,3 +12,5 @@ yarn-error.log*
 
 release
 /index.js
+
+dist-friend/

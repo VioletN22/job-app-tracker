@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, FileText, Brain, MessageSquareHeart, Sparkles, Link2, PenLine, Lock, Wand2, Check, ThumbsUp, ThumbsDown, Play, Pause, Square, Send, Inbox, AlertTriangle, RotateCcw, Search, SkipForward } from 'lucide-react';
 import { AnswerBankEntry, LockerDocument, VoiceNote, VoiceNoteKind, PortfolioLink, CoverLetter, AutopilotJob, AutopilotNeed, DriveStatus } from '../../shared/types';
+import { LITE } from '../../shared/edition';
 
 const api = () => window.electronAPI.autopilot;
 const drive = () => window.electronAPI.drive;
@@ -42,7 +43,56 @@ export const AutopilotPage: React.FC = () => {
   };
   useEffect(() => { reload(); }, []);
 
-  return <WorkspaceShell core={{ answers, docs, notes, links, letters, reload }} />;
+  const core = { answers, docs, notes, links, letters, reload };
+  // Friend / lite build: barebones LinkedIn Easy Apply setup only (no autonomous cockpit).
+  if (LITE) return <LiteSetupPage core={core} />;
+  return <WorkspaceShell core={core} />;
+};
+
+// ── Barebones Autopilot (lite build) ─────────────────────────────────────────
+// Just the setup the Chrome extension + cover letters read from — Profile, Resume,
+// Answers, Assets, Voice, Letters. The actual LinkedIn Easy Apply autofill happens
+// in the browser extension (fill → you submit). No search / run / drive.
+const LITE_TABS = [
+  { id: 'profile', label: 'Profile' },
+  { id: 'answers', label: 'Answers' },
+  { id: 'resumes', label: 'Resume' },
+  { id: 'assets', label: 'Assets' },
+  { id: 'voice', label: 'Voice' },
+  { id: 'letters', label: 'Letters' },
+] as const;
+const LiteSetupPage: React.FC<{ core: CoreData }> = ({ core }) => {
+  const [tab, setTab] = useState<(typeof LITE_TABS)[number]['id']>('profile');
+  const tabBtn: React.CSSProperties = { fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', color: 'var(--muted,#888)', background: 'transparent' };
+  const tabOn: React.CSSProperties = { color: '#fff', background: 'var(--ink,#111)' };
+  return (
+    <div style={{ position: 'fixed', top: 58, left: 'var(--nav-w, 256px)', right: 0, bottom: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--ink)', transition: 'left .18s ease' }}>
+      <div style={{ padding: '16px 24px 12px', borderBottom: '1px solid var(--line,rgba(0,0,0,.1))' }}>
+        <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-.01em' }}>Autopilot — LinkedIn Easy Apply</div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted,#888)', marginTop: 4, lineHeight: 1.55, maxWidth: 720 }}>
+          Set up what aplyd knows about you below. Then on LinkedIn, the aplyd Chrome extension autofills Easy Apply forms from this — you review and hit Submit yourself. Nothing is ever sent automatically.
+        </div>
+        <div style={{ display: 'flex', gap: 4, marginTop: 12, flexWrap: 'wrap' }}>
+          {LITE_TABS.map((t) => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{ ...tabBtn, ...(tab === t.id ? tabOn : {}) }}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ flex: 1, overflow: 'auto', padding: '18px 24px 40px' }}>
+        <div style={{ maxWidth: 720 }}>
+          {tab === 'profile' && <ProfileSection />}
+          {tab === 'answers' && <AnswerBankSection answers={core.answers} reload={core.reload} />}
+          {tab === 'resumes' && <ResumesPanel docs={core.docs} reload={core.reload} />}
+          {tab === 'assets' && <>
+            <DocumentLockerSection docs={core.docs} reload={core.reload} />
+            <PortfolioSection links={core.links} reload={core.reload} />
+          </>}
+          {tab === 'voice' && <VoiceSection notes={core.notes} reload={core.reload} />}
+          {tab === 'letters' && <CoverLetterSection letters={core.letters} reload={core.reload} />}
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // ═══════════════ Workspace cockpit (redesign) ═══════════════════════════════
