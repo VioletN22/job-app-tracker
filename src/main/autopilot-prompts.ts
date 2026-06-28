@@ -189,19 +189,33 @@ export async function extractResumeText(): Promise<string> {
   return '';
 }
 
-// Shared profile block for cover letters — resume + portfolio + facts + voice.
+// Shared profile block for cover letters — the Core profile (identity / contact /
+// links) + resume + portfolio + answer-bank facts + voice. The structured PROFILE
+// is where Email / Phone / name live, so it MUST be here (this was the missing piece
+// that made the letter ask for a phone number it already had).
 function profileBlock(opts: { resumeText?: string; portfolioText?: string; extra?: string }): string {
   const { likes, avoid } = voiceBlocks();
   const resume = opts.resumeText ?? resumeText();
   return (
+    `USER PROFILE (identity, contact, links — use these for the signature/contact line):\n${structuredProfileBlock()}\n\n` +
     (resume ? `USER RESUME:\n${resume}\n\n` : '') +
     `PORTFOLIO LINKS:\n${portfolioBlock()}\n` +
     (opts.portfolioText ? `\n${opts.portfolioText}\n` : '') +
-    `\nKNOWN FACTS:\n${factsBlock()}\n\n` +
+    `\nKNOWN FACTS (answer bank):\n${factsBlock()}\n\n` +
     (opts.extra ? `EXTRA CONTEXT THE USER PROVIDED:\n${opts.extra}\n\n` : '') +
     `WRITING STYLE TO FOLLOW:\n${likes}\nAVOID:\n${avoid}\n\n`
   );
 }
+
+// JSON contract shared by generate + refine: the LETTER is always a complete,
+// ready cover letter (never a question), and any message to the user (a clarifying
+// question, a heads-up about a placeholder, what changed) goes in NOTE — so it never
+// pollutes or replaces the letter. NOTE is '' when there's nothing to say.
+const COVER_JSON_RULES =
+  `\nCONTACT LINE: end the letter with the user's sign-off — their name, then their email and phone on the next line — taken from USER PROFILE. ` +
+  `If a contact detail is genuinely missing from the profile, still write the COMPLETE letter (use a clear placeholder like [your phone]) and ask for it in NOTE — NEVER replace the letter with a question.\n` +
+  `OUTPUT: respond with ONLY valid JSON, no markdown fences: {"letter":"<the full cover letter body, ready to send>","note":"<a short message to the user: a clarifying question, a heads-up about any placeholder, or what you changed — empty string if nothing>"}. ` +
+  `The "letter" field must ALWAYS contain a complete cover letter; questions and commentary go ONLY in "note".`;
 
 export function coverLetterPrompt(opts: { company: string; role: string; jobText?: string; portfolioText?: string; resumeText?: string; researchText?: string; extra?: string }): string {
   return (
@@ -212,9 +226,23 @@ export function coverLetterPrompt(opts: { company: string; role: string; jobText
     (opts.researchText ? `COMPANY RESEARCH (pulled from the web — may be imperfect). FIRST verify it actually describes the SAME company as in the JOB POSTING above: same line of business, consistent with the role/location. If it looks like a different company (e.g. a same-named business in another country/industry), IGNORE this research entirely and write only from the posting + the user's experience — do NOT use any detail you cannot trust. If it does match, weave in 1-2 concrete, accurate, verifiable details (what they do, this year's direction, their values). Never fabricate or overstate.\n${opts.researchText}\n\n` : '') +
     profileBlock(opts) +
     `Approach: read what the role actually wants (from the job posting), then MATCH the user's real resume experience to those needs — lead with the overlaps that matter most, and connect them to where the company is heading. ` +
-    `Keep it to 3-4 tight paragraphs, specific and genuine, no corporate fluff or clichés. ` +
-    `Respond with ONLY the cover letter body (no header, address block, or commentary).`
+    `Keep it to 3-4 tight paragraphs, specific and genuine, no corporate fluff or clichés.` +
+    COVER_JSON_RULES
   );
+}
+
+// Parse the {letter, note} JSON; tolerate a plain-text letter (treat as letter, no note).
+export function parseCoverLetter(out: string): { letter: string; note: string } {
+  const raw = (out || '').trim();
+  try {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) {
+      const j = JSON.parse(m[0]);
+      if (typeof j.letter === 'string' && j.letter.trim()) return { letter: j.letter.trim(), note: String(j.note || '').trim() };
+    }
+  } catch { /* fall through to plain text */ }
+  // not JSON → assume the whole thing is the letter (back-compat / safety)
+  return { letter: raw.replace(/^```[a-z]*\n?|\n?```$/g, '').trim(), note: '' };
 }
 
 // Studio mode: draft the letter AND surface up to 2 clarifying questions when the
@@ -236,10 +264,11 @@ export function refineCoverLetterPrompt(opts: { company: string; role: string; b
   return (
     `Revise the cover letter below based on the user's feedback. Change ONLY what the feedback asks for; keep every other sentence exactly as it is so the change is surgical. Stay grounded in real experience.\n\n` +
     `ROLE: ${opts.role} @ ${opts.company}\n\n` +
+    `USER PROFILE (identity, contact, links — use for the sign-off / contact line):\n${structuredProfileBlock()}\n\n` +
     `CURRENT DRAFT:\n${opts.body}\n\n` +
     `USER FEEDBACK:\n${opts.feedback}\n\n` +
-    `EXISTING STYLE PREFERENCES:\n${likes}\nAVOID:\n${avoid}\n\n` +
-    `Respond with ONLY the full revised cover letter body.`
+    `EXISTING STYLE PREFERENCES:\n${likes}\nAVOID:\n${avoid}\n` +
+    COVER_JSON_RULES
   );
 }
 

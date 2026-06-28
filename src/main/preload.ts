@@ -62,14 +62,14 @@ const electronAPI = {
   // generate / refine-with-feedback / copy, persisted on the application.
   coverLetter: {
     getForApp: (applicationId: string): Promise<CoverLetter | null> => ipcRenderer.invoke('coverletter:getForApp', applicationId),
-    generate: (opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string; location?: string }): Promise<{ body: string; researched: boolean; sources: string[]; error?: string }> =>
+    generate: (opts: { applicationId: string; company: string; role: string; jobText?: string; jobUrl?: string; location?: string }): Promise<{ body: string; note?: string; researched: boolean; sources: string[]; error?: string }> =>
       ipcRenderer.invoke('coverletter:generate', opts),
     onProgress: (cb: (p: { applicationId: string; stage: string; message: string }) => void) => {
       const h = (_e: any, p: any) => cb(p);
       ipcRenderer.on('coverletter:progress', h);
       return () => ipcRenderer.removeListener('coverletter:progress', h);
     },
-    refine: (opts: { applicationId: string; company: string; role: string; body: string; feedback: string; remember?: boolean; jobUrl?: string }): Promise<{ body: string }> =>
+    refine: (opts: { applicationId: string; company: string; role: string; body: string; feedback: string; remember?: boolean; jobUrl?: string }): Promise<{ body: string; note?: string; error?: string }> =>
       ipcRenderer.invoke('coverletter:refine', opts),
     saveForApp: (opts: { applicationId: string; company: string; role: string; jobUrl?: string; body: string }): Promise<CoverLetter> =>
       ipcRenderer.invoke('coverletter:saveForApp', opts),

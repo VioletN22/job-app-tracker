@@ -451,7 +451,8 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
   const [busy, setBusy] = useState<'' | 'generating' | 'refining' | 'saving'>('');
   const [feedback, setFeedback] = useState('');
   const [copied, setCopied] = useState(false);
-  const [note, setNote] = useState('');
+  const [note, setNote] = useState('');        // status line (researching / updated…)
+  const [aiNote, setAiNote] = useState('');     // the assistant's message TO you (questions etc.)
   const [sources, setSources] = useState<string[]>([]);
   const [elapsed, setElapsed] = useState(0);
 
@@ -477,12 +478,13 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
   const save = (text: string) => { cl().saveForApp({ applicationId: application.id, company, role, jobUrl: application.job_url, body: text }).catch(() => {}); };
 
   const generate = async () => {
-    setBusy('generating'); setOpen(true); setSources([]); setNote('Starting — researching ' + company + ' and cross-checking against this listing…');
+    setBusy('generating'); setOpen(true); setSources([]); setAiNote(''); setNote('Starting — researching ' + company + ' and cross-checking against this listing…');
     try {
       const res = await cl().generate({ applicationId: application.id, company, role, jobText, jobUrl: application.job_url, location: application.location });
       if (res.error) { setNote(res.error); return; }
       setBody(res.body || '');
       setSources(res.sources || []);
+      setAiNote(res.note || '');
       setNote(res.researched
         ? 'Drafted using the sources below (it ignores anything that doesn’t match this listing). Check they’re the right company, then refine or copy.'
         : 'Drafted from your profile + the posting (couldn’t fetch company research this time — so no company-specific claims were invented).');
@@ -492,10 +494,12 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
 
   const refine = async () => {
     if (!feedback.trim()) return;
-    setBusy('refining'); setNote('Applying your feedback…');
+    setBusy('refining'); setAiNote(''); setNote('Applying your feedback…');
     try {
       const res = await cl().refine({ applicationId: application.id, company, role, body, feedback: feedback.trim(), remember: true, jobUrl: application.job_url });
-      setBody(res.body || body); setFeedback(''); setNote('Updated. Keep refining, or copy it.');
+      if (res.error) { setNote(res.error); return; }
+      setBody(res.body || body); setFeedback(''); setAiNote(res.note || '');
+      setNote('Updated. Keep refining, or copy it.');
     } catch { setNote('Could not refine. Try again.'); }
     finally { setBusy(''); }
   };
@@ -555,6 +559,19 @@ const CoverLetterSection: React.FC<{ application: JobApplication }> = ({ applica
             </div>
           )}
           {working && <div className="aplyd-bar" />}
+
+          {/* the assistant's message TO you (questions / heads-up) — kept OUT of the letter */}
+          {aiNote && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, lineHeight: 1.5, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(31,120,200,.3)', background: 'rgba(31,120,200,.06)' }}>
+              <Sparkles size={14} style={{ color: '#1f78c8', flex: 'none', marginTop: 1 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: '#1f78c8', marginBottom: 3 }}>Note from your assistant</div>
+                <div style={{ color: 'var(--ink)' }}>{aiNote}</div>
+                <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 5 }}>Answer in the “Tell me what to change” box below (e.g. type your phone number) and hit Refine.</div>
+              </div>
+              <button onClick={() => setAiNote('')} title="Dismiss" style={{ ...linkBtn, color: 'var(--muted)' }}>✕</button>
+            </div>
+          )}
 
           {/* the exact pages the research read — so you can verify the right company */}
           {sources.length > 0 && (

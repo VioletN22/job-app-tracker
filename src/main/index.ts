@@ -99,7 +99,7 @@ import { BOARDS, boardMode, researchCompany } from './autopilot/sources';
 import {
   shutdown as shutdownDriveBrowser, attachHost, setViewBounds, setViewsVisible,
 } from './autopilot/driver';
-import { coverLetterPrompt, refineCoverLetterPrompt, portfolioSnapshot, companyResearch, profileSeedPrompt, parseProfileSeed, copilotPrompt, relatedRolesPrompt, parseRoles } from './autopilot-prompts';
+import { coverLetterPrompt, refineCoverLetterPrompt, parseCoverLetter, portfolioSnapshot, companyResearch, profileSeedPrompt, parseProfileSeed, copilotPrompt, relatedRolesPrompt, parseRoles } from './autopilot-prompts';
 import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
 import { getFlowData } from './flow';
 import { getLicenseStatus, activateLicense, deactivateLicense } from './license';
@@ -772,12 +772,13 @@ ipcMain.handle('coverletter:generate', async (_e, opts: { applicationId: string;
     if (!researchText) { researchText = await companyResearch(opts.company, opts.jobUrl).catch(() => ''); sources = (researchText.match(/SOURCE (\S+):/g) || []).map((m) => m.replace(/^SOURCE |:$/g, '')); }
     log('[cover] research done', 'chars=' + researchText.length, 'sources=' + sources.length, Math.round((Date.now() - t0) / 1000) + 's');
     emit('writing', researchText ? 'Read ' + (sources.length || 1) + ' source(s) — now writing your letter…' : 'Writing your letter from your profile + the posting…');
-    const body = (await runClaudeCLI(coverLetterPrompt({ ...opts, portfolioText, researchText }), 180000)).trim();
+    const raw = await runClaudeCLI(coverLetterPrompt({ ...opts, portfolioText, researchText }), 180000);
+    const { letter: body, note } = parseCoverLetter(raw);
     if (!body) throw new Error('empty draft returned');
     try { saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body }); } catch { /* persist best-effort */ }
-    log('[cover] generate done', Math.round((Date.now() - t0) / 1000) + 's', 'len=' + body.length);
+    log('[cover] generate done', Math.round((Date.now() - t0) / 1000) + 's', 'len=' + body.length, note ? 'note' : '');
     emit('done', 'Done');
-    return { body, researched: !!researchText, sources };
+    return { body, note, researched: !!researchText, sources };
   } catch (e: any) {
     const msg = String(e?.message || e);
     log('[cover] generate FAILED', msg, Math.round((Date.now() - t0) / 1000) + 's');
@@ -786,10 +787,19 @@ ipcMain.handle('coverletter:generate', async (_e, opts: { applicationId: string;
   }
 });
 ipcMain.handle('coverletter:refine', async (_e, opts: { applicationId: string; company: string; role: string; body: string; feedback: string; remember?: boolean; jobUrl?: string }) => {
-  if (opts.remember && opts.feedback.trim()) addVoiceNote('style', opts.feedback.trim());
-  const body = (await runClaudeCLI(refineCoverLetterPrompt(opts), 90000)).trim();
-  try { saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body }); } catch { /* persist best-effort */ }
-  return { body };
+  try {
+    if (opts.remember && opts.feedback.trim()) addVoiceNote('style', opts.feedback.trim());
+    const raw = await runClaudeCLI(refineCoverLetterPrompt(opts), 120000);
+    const { letter: body, note } = parseCoverLetter(raw);
+    // never wipe a good draft: if parsing somehow yields nothing, keep the old body
+    const finalBody = body || opts.body;
+    try { saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body: finalBody }); } catch { /* persist best-effort */ }
+    return { body: finalBody, note };
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    log('[cover] refine FAILED', msg);
+    return { body: opts.body, note: '', error: /timed out/i.test(msg) ? 'That refine took too long — try again in a moment.' : ('Could not refine: ' + msg) };
+  }
 });
 ipcMain.handle('coverletter:saveForApp', async (_e, opts: { applicationId: string; company: string; role: string; jobUrl?: string; body: string }) =>
   saveCoverLetterForApplication(opts.applicationId, { company: opts.company, role: opts.role, jobUrl: opts.jobUrl ?? null, body: opts.body }));
