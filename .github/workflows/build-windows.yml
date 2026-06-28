@@ -1,0 +1,48 @@
+name: Build Windows (friend / lite)
+
+# Manual trigger: GitHub → Actions → "Build Windows (friend / lite)" → Run workflow.
+# Builds the LITE edition on a real Windows runner (compiles the native DB module
+# there), and uploads a downloadable installer + portable .exe + the extension.
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Switch to LITE (friend) edition
+        shell: bash
+        run: printf 'export const LITE = true;\n' > src/shared/edition.ts
+
+      - name: Compile (renderer + main)
+        run: npm run build
+
+      - name: Package Windows app
+        run: npx electron-builder --config electron-builder.win.js --win --x64
+
+      - name: Stage artifacts (exe + extension + readme)
+        shell: bash
+        run: |
+          mkdir -p out
+          cp release/*.exe out/ 2>/dev/null || true
+          cp -r extension out/aplyd-chrome-extension
+          cp scripts/FRIEND_README_WINDOWS.md out/README.md 2>/dev/null || true
+          ls -la out
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: aplyd-windows
+          path: out
+          if-no-files-found: error

@@ -25,40 +25,40 @@ let client: Anthropic | null = null;
  * Run Claude via the CLI (uses subscription authentication from `claude login`)
  * This is the same approach Inkd uses - spawns the claude command directly
  */
+// Cross-platform (macOS + Windows): spawn the `claude` CLI in subscription mode and
+// feed the prompt via stdin. We strip API-key env vars to force subscription auth,
+// and prepend the usual CLI install locations to PATH (the GUI app often launches
+// with a minimal PATH). On Windows we use shell:true so `claude.cmd` resolves.
 export function runClaudeCLI(prompt: string, timeoutMs = 60000): Promise<string> {
-  const b64 = Buffer.from(prompt, "utf8").toString("base64");
-
-  // Use the same pattern as Inkd - strip API key env vars to force subscription mode
-  const cmd =
-    `export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; ` +
-    `CLAUDE="$(command -v claude || echo "$HOME/.local/bin/claude")"; ` +
-    `cd /tmp && printf %s '${b64}' | base64 --decode | ` +
-    `env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN ` +
-    `-u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION ` +
-    // --model sonnet: ~10x faster than the default (Opus) so extractions finish in
-    // a few seconds instead of intermittently hitting the timeout. Same as Inkd.
-    `"$CLAUDE" -p --model sonnet --output-format text`;
+  const isWin = process.platform === 'win32';
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION']) delete env[k];
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const extraPaths = isWin
+    ? [path.join(process.env.APPDATA || '', 'npm'), path.join(home, 'AppData', 'Local', 'Microsoft', 'WindowsApps')]
+    : ['/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, 'bin')];
+  env.PATH = [...extraPaths, env.PATH || ''].filter(Boolean).join(path.delimiter);
 
   return new Promise((resolve, reject) => {
-    const proc = spawn("/bin/sh", ["-c", cmd]);
-    let stdout = "";
-    let stderr = "";
+    // --model sonnet: ~10x faster than Opus so extractions finish in seconds.
+    const proc = spawn('claude', ['-p', '--model', 'sonnet', '--output-format', 'text'], { env, shell: isWin });
+    let stdout = '';
+    let stderr = '';
 
     const timer = setTimeout(() => {
-      proc.kill();
-      reject(new Error("claude subprocess timed out"));
+      try { proc.kill(); } catch { /* ignore */ }
+      reject(new Error('claude subprocess timed out'));
     }, timeoutMs);
 
-    proc.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
-    proc.on("close", (code: number) => {
+    proc.stdout?.on('data', (d: Buffer) => (stdout += d.toString()));
+    proc.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
+    proc.on('error', (e: Error) => { clearTimeout(timer); reject(new Error('claude CLI not found / failed to start: ' + e.message)); });
+    proc.on('close', (code: number) => {
       clearTimeout(timer);
-      if (code !== 0) {
-        reject(new Error(`claude CLI exited ${code}: ${stderr.slice(0, 400)}`));
-      } else {
-        resolve(stdout.trim());
-      }
+      if (code !== 0) reject(new Error(`claude CLI exited ${code}: ${stderr.slice(0, 400)}`));
+      else resolve(stdout.trim());
     });
+    try { proc.stdin?.write(prompt); proc.stdin?.end(); } catch { /* ignore */ }
   });
 }
 
