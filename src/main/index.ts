@@ -1,11 +1,13 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
-// File-based logging — survives even when there's no attached console
-const LOG_PATH = '/tmp/aplyd-main.log';
+// File-based logging — survives even when there's no attached console. Uses the OS
+// temp dir so it works on Windows too (not a hardcoded /tmp).
+const LOG_PATH = path.join(os.tmpdir(), 'aplyd-main.log');
 function log(...args: unknown[]) {
   const line = new Date().toISOString() + ' ' + args.map(String).join(' ') + '\n';
   try { fs.appendFileSync(LOG_PATH, line); } catch { /* ignore */ }
@@ -22,6 +24,7 @@ if (!app.requestSingleInstanceLock()) {
 
 import {
   initializeDatabase,
+  getDatabase,
   closeDatabase,
   getAllApplications,
   getApplication,
@@ -283,8 +286,27 @@ function rescheduleDaily(): void {
   }, 60 * 1000);
 }
 
+// Headless boot self-check (CI smoke test): run the REAL packaged main process —
+// load the native DB module, run a query, confirm the edition module resolved — and
+// exit 0/1 WITHOUT opening a window. Catches native-load / missing-module crashes
+// on a runner with no display. Triggered with APLYD_SMOKETEST=1.
+function runSmokeTest(): void {
+  try {
+    initializeDatabase();
+    const row = getDatabase().prepare('SELECT 1 AS ok').get() as { ok: number } | undefined;
+    if (!row || row.ok !== 1) throw new Error('db query failed');
+    if (typeof LITE !== 'boolean') throw new Error('edition module not loaded');
+    log('[smoketest] OK edition.LITE=' + LITE + ' platform=' + process.platform);
+    app.exit(0);
+  } catch (e) {
+    log('[smoketest] FAIL ' + String(e));
+    app.exit(1);
+  }
+}
+
 app.whenReady().then(() => {
   log('[whenReady] uptime=' + process.uptime().toFixed(3) + ' isPackaged=' + app.isPackaged);
+  if (process.env.APLYD_SMOKETEST === '1') { runSmokeTest(); return; }
   isStarting = true;
   // Create the window FIRST — DB init is deferred until after the splash is
   // visible (see the show handler above), keeping cold start minimal.

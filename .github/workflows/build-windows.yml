@@ -31,6 +31,21 @@ jobs:
       - name: Package Windows app
         run: npx electron-builder --config electron-builder.win.js --win --x64 --publish never
 
+      - name: Smoke test — boot the built app on Windows
+        shell: pwsh
+        run: |
+          $exe = "release\win-unpacked\aplyd.exe"
+          if (!(Test-Path $exe)) { Write-Error "built exe not found: $exe"; exit 1 }
+          $env:APLYD_SMOKETEST = "1"
+          Write-Host "Booting $exe (loads native DB module + edition module, runs a query)…"
+          $p = Start-Process -FilePath $exe -PassThru
+          if (!$p.WaitForExit(60000)) { $p.Kill(); Write-Error "app did not exit within 60s (hung on boot)"; exit 1 }
+          Write-Host "exit code: $($p.ExitCode)"
+          $log = Join-Path $env:TEMP "aplyd-main.log"
+          if (Test-Path $log) { Write-Host "---- last log lines ----"; Get-Content $log -Tail 8 }
+          if ($p.ExitCode -ne 0) { Write-Error "smoke test FAILED (app crashed on boot)"; exit 1 }
+          Write-Host "Smoke test PASSED — the packaged Windows app boots cleanly."
+
       - name: Stage artifacts (exe + extension + readme)
         shell: bash
         run: |
