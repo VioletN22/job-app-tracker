@@ -587,6 +587,7 @@ export function getApplication(id: string): JobApplication | null {
  */
 export function getAllApplications(filters?: {
   company?: string;
+  search?: string;
   stage?: string;
   dateFrom?: string;
   dateTo?: string;
@@ -595,9 +596,20 @@ export function getAllApplications(filters?: {
   let query = 'SELECT * FROM applications WHERE 1=1';
   const params: any[] = [];
 
+  // Fuzzy multi-field search (LIKE is case-insensitive for ASCII in SQLite). Each
+  // whitespace-separated term must match somewhere, so a role, company, or keyword works.
+  if (filters?.search) {
+    const fields = ['company', 'job_title', 'location', 'job_source', 'required_skills', 'nice_to_have_skills', 'key_responsibilities', 'notes', 'job_description'];
+    for (const term of filters.search.split(/\s+/).filter(Boolean)) {
+      query += ' AND (' + fields.map((f) => `${f} LIKE ?`).join(' OR ') + ')';
+      for (let i = 0; i < fields.length; i++) params.push(`%${term}%`);
+    }
+  }
+
+  // Backward-compatible exact company filter (partial match via LIKE).
   if (filters?.company) {
-    query += ' AND company = ?';
-    params.push(filters.company);
+    query += ' AND company LIKE ?';
+    params.push(`%${filters.company}%`);
   }
 
   if (filters?.stage) {

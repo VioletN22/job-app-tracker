@@ -3,7 +3,7 @@ import { Search, Plus } from 'lucide-react';
 import { Dropdown } from './Dropdown';
 
 interface Filters {
-  company?: string;
+  search?: string;
   stage?: string;
 }
 
@@ -24,24 +24,24 @@ const STAGE_OPTIONS = [
 ];
 
 export const FilterBar: React.FC<FilterBarProps> = ({ onFilterChange, onAddClick }) => {
-  const [company, setCompany] = useState('');
+  const [search, setSearch] = useState('');
   const [stage, setStage] = useState('');
 
-  const handleCompanyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    setCompany(value);
-    onFilterChange({ company: value || undefined, stage: stage || undefined });
+    setSearch(value);
+    onFilterChange({ search: value || undefined, stage: stage || undefined });
   };
 
   const handleStageChange = (value: string) => {
     setStage(value);
-    onFilterChange({ company: company || undefined, stage: value || undefined });
+    onFilterChange({ search: search || undefined, stage: value || undefined });
   };
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
       {/* Company search */}
-      <div style={{ position: 'relative', flex: 1, maxWidth: '280px' }}>
+      <div style={{ position: 'relative', flex: 1, maxWidth: '360px' }}>
         <Search
           size={14}
           style={{
@@ -54,9 +54,9 @@ export const FilterBar: React.FC<FilterBarProps> = ({ onFilterChange, onAddClick
         />
         <input
           type="text"
-          placeholder="Filter by company…"
-          value={company}
-          onChange={handleCompanyChange}
+          placeholder="Search role, company, keyword…"
+          value={search}
+          onChange={handleSearchChange}
           style={{
             width: '100%',
             padding: '10px 0 10px 24px',

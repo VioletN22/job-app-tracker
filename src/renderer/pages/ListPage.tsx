@@ -10,7 +10,7 @@ import { Workflow } from '../../shared/types';
 const OUTCOME_STAGES = ['rejected', 'withdrawn'];
 
 interface Filters {
-  company?: string;
+  search?: string;
   stage?: string;
 }
 
@@ -45,7 +45,7 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
       await window.electronAPI.db.createStageHistory(applicationId, stage);
       await window.electronAPI.db.updateApplication(applicationId, { current_stage: stage });
     } catch (err) {
-      await refresh(filters); // revert to server truth on failure
+      await refresh(); // revert to server truth on failure
       setErrorDialog({
         title: 'Error Updating Status',
         message: err instanceof Error ? err.message : 'Failed to update status',
@@ -53,9 +53,10 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
     }
   };
 
-  const handleFilterChange = async (newFilters: Filters) => {
+  // Filtering is done client-side (instant, fuzzy, multi-field) — no DB round-trip
+  // per keystroke. We keep the full list loaded and narrow it in `filteredApplications`.
+  const handleFilterChange = (newFilters: Filters) => {
     setFilters(newFilters);
-    await refresh(newFilters);
   };
 
   const handleAddClick = () => {
@@ -75,7 +76,7 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
         throw new Error(result.error || 'Failed to add application');
       }
 
-      await refresh(filters);
+      await refresh();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to add application';
       throw new Error(errorMessage);
@@ -93,7 +94,7 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
         throw new Error(result.error || 'Failed to add application');
       }
 
-      await refresh(filters);
+      await refresh();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to add application';
       throw new Error(errorMessage);
@@ -105,7 +106,7 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
   const handleDeleteApplication = async (applicationId: string) => {
     try {
       await window.electronAPI.db.deleteApplication(applicationId);
-      await refresh(filters);
+      await refresh();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete application';
       setErrorDialog({
@@ -115,10 +116,31 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
     }
   };
 
-  // Filter applications based on current filters
+  // Filter applications based on current filters.
+  // Search is multi-field + multi-keyword: every whitespace-separated term must appear
+  // somewhere in the application (company, role, location, source, skills, notes…), so
+  // you can find a job by the role, the company, or any keyword you remember.
   const filteredApplications = applications.filter((app) => {
-    if (filters.company && !app.company.toLowerCase().includes(filters.company.toLowerCase())) {
-      return false;
+    if (filters.search) {
+      const haystack = [
+        app.company,
+        app.job_title,
+        app.location,
+        app.job_source,
+        app.required_skills,
+        app.nice_to_have_skills,
+        app.key_responsibilities,
+        app.notes,
+        app.job_description,
+        app.current_stage,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      const terms = filters.search.toLowerCase().split(/\s+/).filter(Boolean);
+      if (!terms.every((term) => haystack.includes(term))) {
+        return false;
+      }
     }
     if (filters.stage && app.current_stage !== filters.stage) {
       return false;
@@ -144,7 +166,9 @@ export const ListPage: React.FC<ListPageProps> = ({ onSelectApplication }) => {
       {!loading && filteredApplications.length === 0 && (
         <div className="flex items-center justify-center py-12">
           <p className="text-gray-600">
-            No applications found. Add one to get started!
+            {applications.length === 0
+              ? 'No applications yet. Add one to get started!'
+              : `No applications match${filters.search ? ` “${filters.search}”` : ' this filter'}.`}
           </p>
         </div>
       )}
