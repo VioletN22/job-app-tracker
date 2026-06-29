@@ -40,9 +40,12 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({
   const handleFileUpload = async () => {
     try {
       setError(null);
-      const content = await window.electronAPI.selectFile();
-      if (content) {
-        setJobListing(content);
+      // selectFile() resolves to { filePath, content } — store the text content,
+      // not the whole object (storing the object renders [object Object] and makes
+      // the later jobListing.trim() throw).
+      const result = await window.electronAPI.selectFile();
+      if (result && result.content) {
+        setJobListing(result.content);
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to upload file';

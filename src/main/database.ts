@@ -488,6 +488,18 @@ export function updateWorkflow(
  */
 export function deleteWorkflow(id: string): void {
   const database = getDatabase();
+  // Guard the foreign key: if any application still references this workflow,
+  // a raw DELETE throws an opaque SQLITE_CONSTRAINT. Surface a friendly error
+  // instead so the UI can tell the user why the delete was blocked.
+  const { n } = database
+    .prepare('SELECT COUNT(*) AS n FROM applications WHERE workflow_id = ?')
+    .get(id) as { n: number };
+  if (n > 0) {
+    throw new Error(
+      `This workflow is used by ${n} application${n === 1 ? '' : 's'}. ` +
+      `Move or delete ${n === 1 ? 'that application' : 'those applications'} first, then delete the workflow.`
+    );
+  }
   const stmt = database.prepare('DELETE FROM workflows WHERE id = ?');
   stmt.run(id);
 }

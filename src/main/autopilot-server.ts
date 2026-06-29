@@ -21,11 +21,23 @@ let server: http.Server | null = null;
 let pendingJob: { company: string; title: string; jobText?: string; jobUrl?: string; at: number } | null = null;
 const PENDING_TTL_MS = 30 * 60 * 1000;
 
+// Only the extension may reach the bridge. The extension's background service
+// worker uses its host_permission (no CORS preflight / no Access-Control headers
+// needed), so we DON'T echo a permissive Access-Control-Allow-Origin: '*'. That
+// star would let ANY website the user visits read their profile/answers/documents
+// off 127.0.0.1. Instead we hard-reject any request whose Origin is a real website.
 const CORS = {
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
+// Allow: no Origin (same-process / service-worker fetch) or a chrome-extension://
+// Origin. Reject: any http(s):// website Origin (that's the exfiltration vector).
+function isAllowedOrigin(req: http.IncomingMessage): boolean {
+  const o = req.headers.origin;
+  if (!o) return true;
+  if (/^chrome-extension:\/\//i.test(o)) return true;
+  return false;
+}
 function send(res: http.ServerResponse, code: number, body: unknown) {
   res.writeHead(code, { 'Content-Type': 'application/json', ...CORS });
   res.end(JSON.stringify(body));
@@ -57,6 +69,8 @@ export function startAutopilotServer(deps: {
 }): void {
   if (server) return;
   server = http.createServer(async (req, res) => {
+    // Reject any request originating from a real website before doing anything else.
+    if (!isAllowedOrigin(req)) return send(res, 403, { error: 'forbidden origin' });
     if (req.method === 'OPTIONS') return send(res, 204, {});
     const url = new URL(req.url || '/', 'http://localhost');
     try {

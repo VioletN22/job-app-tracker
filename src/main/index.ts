@@ -92,7 +92,7 @@ import {
   setSetting,
 } from './database';
 import { parseRepoRef } from './autopilot/github-jobs';
-import { startAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
+import { startAutopilotServer, stopAutopilotServer, AUTOPILOT_PORT } from './autopilot-server';
 import {
   runDrive, runFull, harvest, stopDrive, approveJob, approveAll, isDriveRunning,
   pauseDrive, resumeDrive, skipCurrent, isPaused, openForApply, markApplied, submitHeld, pingStatus,
@@ -103,7 +103,7 @@ import {
   shutdown as shutdownDriveBrowser, attachHost, setViewBounds, setViewsVisible,
 } from './autopilot/driver';
 import { coverLetterPrompt, refineCoverLetterPrompt, parseCoverLetter, portfolioSnapshot, companyResearch, profileSeedPrompt, parseProfileSeed, copilotPrompt, relatedRolesPrompt, parseRoles } from './autopilot-prompts';
-import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication } from './claude';
+import { extractJobListing, generateGuidance, runClaudeCLI, chatAboutApplication, killClaudeProcesses } from './claude';
 import { getFlowData } from './flow';
 import { getLicenseStatus, activateLicense, deactivateLicense } from './license';
 import { JobApplication, Workflow, ExtractedJobData } from '../shared/types';
@@ -331,6 +331,13 @@ app.whenReady().then(() => {
   } catch (e) {
     log('[autopilot] failed to start bridge', e);
   }
+});
+
+// On quit, reap any in-flight `claude` subprocesses and stop the local bridge so
+// nothing is left running (and the bridge port is freed) after the app exits.
+app.on('before-quit', () => {
+  try { killClaudeProcesses(); } catch { /* ignore */ }
+  try { stopAutopilotServer(); } catch { /* ignore */ }
 });
 
 app.on('window-all-closed', () => {

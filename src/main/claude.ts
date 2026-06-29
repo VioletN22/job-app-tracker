@@ -6,7 +6,19 @@ import { ExtractedJobData, GuidanceContent } from "../shared/types";
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
+
+// Track every live `claude` subprocess so we can reap them on app quit. Without
+// this, a long-running CLI call (cover-letter draft, research) keeps running as an
+// orphaned process after the window closes, holding the user's subscription session
+// open. killClaudeProcesses() is called from the app 'before-quit' handler.
+const liveProcs = new Set<ChildProcess>();
+export function killClaudeProcesses(): void {
+  for (const p of liveProcs) {
+    try { p.kill(); } catch { /* already gone */ }
+  }
+  liveProcs.clear();
+}
 
 // Polyfill fetch, Headers, and FormData if not available (for Electron environment)
 if (!globalThis.fetch) {
@@ -42,6 +54,7 @@ export function runClaudeCLI(prompt: string, timeoutMs = 60000): Promise<string>
   return new Promise((resolve, reject) => {
     // --model sonnet: ~10x faster than Opus so extractions finish in seconds.
     const proc = spawn('claude', ['-p', '--model', 'sonnet', '--output-format', 'text'], { env, shell: isWin });
+    liveProcs.add(proc);
     let stdout = '';
     let stderr = '';
 
@@ -52,9 +65,10 @@ export function runClaudeCLI(prompt: string, timeoutMs = 60000): Promise<string>
 
     proc.stdout?.on('data', (d: Buffer) => (stdout += d.toString()));
     proc.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
-    proc.on('error', (e: Error) => { clearTimeout(timer); reject(new Error('claude CLI not found / failed to start: ' + e.message)); });
+    proc.on('error', (e: Error) => { clearTimeout(timer); liveProcs.delete(proc); reject(new Error('claude CLI not found / failed to start: ' + e.message)); });
     proc.on('close', (code: number) => {
       clearTimeout(timer);
+      liveProcs.delete(proc);
       if (code !== 0) reject(new Error(`claude CLI exited ${code}: ${stderr.slice(0, 400)}`));
       else resolve(stdout.trim());
     });

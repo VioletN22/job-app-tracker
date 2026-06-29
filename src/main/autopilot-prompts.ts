@@ -5,6 +5,7 @@
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
+import dns from 'dns';
 import {
   getAnswerBank, getDocuments, getVoiceNotes, getPortfolioLinks, getSetting,
 } from './database';
@@ -47,16 +48,73 @@ export function resumeText(): string {
   return '';
 }
 
+// ── SSRF guard ───────────────────────────────────────────────────────────────
+// These fetchers pull arbitrary URLs (portfolio links, search-result links). Without
+// a guard, a crafted URL could make the app hit internal/loopback services (the
+// autopilot bridge on 127.0.0.1, cloud metadata at 169.254.169.254, LAN boxes, etc).
+// We allow ONLY public http(s) hosts: reject non-http(s) schemes, localhost, and any
+// host that resolves to a private/loopback/link-local IP. Redirect depth is capped so
+// a public URL can't bounce into an internal one via a redirect chain.
+const MAX_REDIRECTS = 4;
+
+function isPrivateIp(ip: string): boolean {
+  const a = (ip || '').trim().toLowerCase();
+  if (!a) return true;
+  // IPv4
+  const m = a.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const o = m.slice(1).map(Number);
+    if (o.some((x) => x > 255)) return true;
+    if (o[0] === 127) return true;                              // loopback
+    if (o[0] === 10) return true;                               // private
+    if (o[0] === 192 && o[1] === 168) return true;              // private
+    if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return true;  // private
+    if (o[0] === 169 && o[1] === 254) return true;              // link-local / metadata
+    if (o[0] === 0) return true;                                // this-host
+    return false;
+  }
+  // IPv6
+  if (a === '::1' || a === '::') return true;                   // loopback / unspecified
+  if (/^f[cd][0-9a-f]{2}:/.test(a)) return true;                // fc00::/7 unique-local
+  if (/^fe80:/.test(a)) return true;                            // link-local
+  // IPv4-mapped IPv6 (::ffff:127.0.0.1 etc)
+  const mapped = a.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (mapped) return isPrivateIp(mapped[1]);
+  return false;
+}
+
+// Resolve the hostname and confirm scheme + every resolved address is public.
+async function urlAllowed(rawUrl: string): Promise<boolean> {
+  let u: URL;
+  try { u = new URL(rawUrl); } catch { return false; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost')) return false;
+  // If the host is already a literal IP, check it directly.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) return !isPrivateIp(host);
+  // Otherwise resolve the name (catches names pointing at internal IPs).
+  return new Promise<boolean>((resolve) => {
+    try {
+      dns.lookup(host, { all: true }, (err, addrs) => {
+        if (err || !addrs || !addrs.length) return resolve(false);
+        resolve(addrs.every((x) => !isPrivateIp(x.address)));
+      });
+    } catch { resolve(false); }
+  });
+}
+
 // Best-effort fetch of a portfolio page, stripped to text, so Claude can ground
 // a letter in the actual site content. Short timeout; failure is non-fatal.
-export function fetchUrlText(url: string, timeoutMs = 6000): Promise<string> {
+export async function fetchUrlText(url: string, timeoutMs = 6000, depth = 0): Promise<string> {
+  if (depth > MAX_REDIRECTS) return '';
+  if (!(await urlAllowed(url))) return '';
   return new Promise((resolve) => {
     try {
       const lib = url.startsWith('https') ? https : http;
       const req = lib.get(url, { headers: { 'User-Agent': 'aplyd-autopilot' } }, (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
-          fetchUrlText(new URL(res.headers.location, url).toString(), timeoutMs).then(resolve);
+          fetchUrlText(new URL(res.headers.location, url).toString(), timeoutMs, depth + 1).then(resolve);
           return;
         }
         let data = '';
@@ -80,7 +138,9 @@ export function fetchUrlText(url: string, timeoutMs = 6000): Promise<string> {
 
 // Raw fetch (HTML kept) — used to parse search-result links. Browser-like UA so
 // search endpoints don't 403 us. Caps the body and never rejects.
-export function fetchUrlRaw(url: string, timeoutMs = 7000): Promise<string> {
+export async function fetchUrlRaw(url: string, timeoutMs = 7000, depth = 0): Promise<string> {
+  if (depth > MAX_REDIRECTS) return '';
+  if (!(await urlAllowed(url))) return '';
   return new Promise((resolve) => {
     try {
       const lib = url.startsWith('https') ? https : http;
@@ -88,7 +148,7 @@ export function fetchUrlRaw(url: string, timeoutMs = 7000): Promise<string> {
       const req = lib.get(url, { headers }, (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
-          fetchUrlRaw(new URL(res.headers.location, url).toString(), timeoutMs).then(resolve);
+          fetchUrlRaw(new URL(res.headers.location, url).toString(), timeoutMs, depth + 1).then(resolve);
           return;
         }
         let data = '';
