@@ -5,7 +5,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { runClaudeCLI } from './claude';
-import { getAnswerBank, upsertAnswer, getDocuments } from './database';
+import { getAnswerBank, upsertAnswer, getDocuments, getApplication, updateApplication } from './database';
 import {
   resolveFieldPrompt, tailorAnswerPrompt, parseFieldAction,
   coverLetterStudioPrompt, refineCoverLetterPrompt, extractResumeText, portfolioSnapshotAll,
@@ -163,6 +163,20 @@ export function startAutopilotServer(deps: {
         const b = await readBody(req); // { company, jobTitle, jobUrl }
         try { deps.onApply(b.company || 'Unknown', b.jobTitle || 'Role', b.jobUrl || ''); } catch { /* best effort */ }
         return send(res, 200, { ok: true });
+      }
+
+      // Wren the Keeper (forklore) leaves context on an application: a dated note that
+      // shows in aplyd and feeds its own Claude when drafting. Append-only, never
+      // destructive. This is how the village writes back into the workspace.
+      if (url.pathname === '/note' && req.method === 'POST') {
+        const b = await readBody(req); // { appId, note }
+        if (!b || !b.appId || !String(b.note || '').trim()) return send(res, 400, { error: 'appId and note required' });
+        const app = getApplication(String(b.appId));
+        if (!app) return send(res, 404, { error: 'application not found' });
+        const line = `[Wren · ${new Date().toISOString().slice(0, 10)}] ${String(b.note).trim()}`;
+        const notes = app.notes ? `${String(app.notes).trimEnd()}\n\n${line}` : line;
+        updateApplication(String(b.appId), { notes });
+        return send(res, 200, { ok: true, appId: b.appId });
       }
 
       return send(res, 404, { error: 'unknown route' });
